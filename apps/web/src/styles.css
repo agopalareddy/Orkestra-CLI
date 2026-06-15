@@ -710,7 +710,7 @@ textarea:focus {
 }
 
 .composerBarLeft {
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 
 .iconRound {
@@ -1224,6 +1224,7 @@ textarea:focus {
 
   .composerBarLeft {
     width: 100%;
+    flex-wrap: wrap;
   }
 
   .chatBubble {

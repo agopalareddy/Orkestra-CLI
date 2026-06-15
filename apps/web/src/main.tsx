@@ -913,7 +913,7 @@ function ChatPanel({
             <textarea
               className="composerInput"
               value={value}
-              placeholder="Bir şey sorun veya görev verin…  (Ctrl+Enter gönder · Ctrl+V görsel yapıştır)"
+              placeholder="Bir şey sorun veya görev verin…  (Enter gönder · Shift+Enter yeni satır · Ctrl+V görsel yapıştır)"
               onChange={(event) => onChange(event.target.value)}
               onPaste={(event) => {
                 const images = Array.from(event.clipboardData.items)
@@ -926,7 +926,7 @@ function ChatPanel({
                 }
               }}
               onKeyDown={(event) => {
-                if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+                if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
                   onSend();
                 }
