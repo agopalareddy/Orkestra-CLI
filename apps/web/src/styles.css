@@ -1071,7 +1071,7 @@ textarea:focus {
 .streamPanel {
   min-height: 0;
   display: grid;
-  grid-template-rows: 38px 30px minmax(0, 1fr);
+  grid-template-rows: 38px 30px minmax(0, 1fr) auto;
   border: 1px solid rgba(148, 163, 184, 0.14);
   border-radius: 14px;
   background: #020409;
@@ -1138,11 +1138,52 @@ textarea:focus {
   padding: 0 2px;
   font-family: "Cascadia Mono", "Consolas", monospace;
   font-size: 0.74rem;
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.streamTabs button:hover {
+  color: #a855f7;
 }
 
 .streamTabs .active {
   color: #a855f7;
   border-bottom: 1px solid #a855f7;
+}
+
+.streamPagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 8px 16px;
+  border-top: 1px solid rgba(148, 163, 184, 0.12);
+  background: rgba(15, 23, 42, 0.4);
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  font-size: 0.74rem;
+  color: #7da2d8;
+}
+
+.streamPagination button {
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(15, 23, 42, 0.6);
+  color: #93c5fd;
+  border-radius: 6px;
+  min-height: 24px;
+  padding: 0 10px;
+  cursor: pointer;
+  font-size: 0.72rem;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.streamPagination button:hover:not(:disabled) {
+  background: rgba(129, 140, 248, 0.16);
+  border-color: rgba(129, 140, 248, 0.4);
+}
+
+.streamPagination button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .streamBody {

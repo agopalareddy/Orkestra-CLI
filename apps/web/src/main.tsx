@@ -507,7 +507,7 @@ function App() {
           >
             <span />
           </div>
-          <StreamPanel items={streamItems} />
+          <StreamPanel items={streamItems} onClear={() => setStreamItems([])} />
         </section>
       </section>
 
@@ -1154,7 +1154,31 @@ function ConversationsPanel({
   );
 }
 
-function StreamPanel({ items }: { items: StreamItem[] }) {
+function StreamPanel({ items, onClear }: { items: StreamItem[]; onClear: () => void }) {
+  const [activeTab, setActiveTab] = useState<"all" | "claude" | "codex" | "ag" | "system">("all");
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 15;
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeTab]);
+
+  const filteredItems = items.filter((item) => {
+    const src = (item.source || "").toLowerCase();
+    const isClaude = src.includes("claude");
+    const isCodex = src.includes("codex");
+    const isAg = src.includes("antigravity") || src.includes("gemini") || src.includes("agy");
+
+    if (activeTab === "claude") return isClaude;
+    if (activeTab === "codex") return isCodex;
+    if (activeTab === "ag") return isAg;
+    if (activeTab === "system") return !isClaude && !isCodex && !isAg;
+    return true;
+  });
+
+  const totalPages = Math.ceil(filteredItems.length / pageSize) || 1;
+  const displayedItems = filteredItems.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
   return (
     <section className="streamPanel">
       <div className="streamChrome">
@@ -1162,18 +1186,43 @@ function StreamPanel({ items }: { items: StreamItem[] }) {
         <span className="dot yellow" />
         <span className="dot green" />
         <strong>orkestra-stream</strong>
-        <button>Temizle</button>
+        <button onClick={onClear}>Temizle</button>
       </div>
       <div className="streamTabs">
-        <button className="active">Tüm</button>
-        <button>Claude</button>
-        <button>Codex</button>
-        <button>AG</button>
-        <button>Sistem</button>
+        <button
+          className={activeTab === "all" ? "active" : ""}
+          onClick={() => setActiveTab("all")}
+        >
+          Tüm
+        </button>
+        <button
+          className={activeTab === "claude" ? "active" : ""}
+          onClick={() => setActiveTab("claude")}
+        >
+          Claude
+        </button>
+        <button
+          className={activeTab === "codex" ? "active" : ""}
+          onClick={() => setActiveTab("codex")}
+        >
+          Codex
+        </button>
+        <button
+          className={activeTab === "ag" ? "active" : ""}
+          onClick={() => setActiveTab("ag")}
+        >
+          AG
+        </button>
+        <button
+          className={activeTab === "system" ? "active" : ""}
+          onClick={() => setActiveTab("system")}
+        >
+          Sistem
+        </button>
       </div>
       <div className="streamBody">
-        {items.length ? (
-          items.map((item) => (
+        {displayedItems.length ? (
+          displayedItems.map((item) => (
             <article key={item.id} className={item.type}>
               <span>{item.source}</span>
               <strong>{item.type}</strong>
@@ -1184,6 +1233,23 @@ function StreamPanel({ items }: { items: StreamItem[] }) {
           <p>Log bekleniyor...</p>
         )}
       </div>
+      {totalPages > 1 && (
+        <div className="streamPagination">
+          <button
+            disabled={currentPage === 1}
+            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+          >
+            Önceki
+          </button>
+          <span>Sayfa {currentPage} / {totalPages}</span>
+          <button
+            disabled={currentPage === totalPages}
+            onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+          >
+            Sonraki
+          </button>
+        </div>
+      )}
     </section>
   );
 }
