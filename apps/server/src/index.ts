@@ -10,6 +10,7 @@ import { Runner } from "./runner";
 import { GitService } from "./git";
 import {
   detectPipelineIntent,
+  generateBrief,
   getCliStatuses,
   logoutCli,
   runDebate,
@@ -121,6 +122,14 @@ app.post<{
   }
   reply.raw.end();
 });
+
+// Sohbetten Code Task Brief uretir (Chat -> Code gecisi). Kullanici duzenleyip onaylar.
+app.post<{ Body: { history?: ChatMessage[]; message?: string; planner?: "claude" | "codex" | "antigravity" | "auto" } }>(
+  "/api/brief",
+  async (request) => {
+    return generateBrief(request.body.history ?? [], request.body.message, request.body.planner ?? "auto");
+  }
+);
 
 app.get("/api/cli-status", async () => ({
   tools: await getCliStatuses(),

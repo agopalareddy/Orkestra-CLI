@@ -120,6 +120,91 @@ async function runSinglePlanner(planner: PlannerId, message: string, history: Ch
   }
 }
 
+// ----- Code Task Brief (Chat -> Code) -----
+// Sohbetten yapilandirilmis bir gorev brief'i uretir. Sadece kesin kararlar;
+// vazgecilen fikirler haric. Kullanici brief'i duzenleyip onaylayinca run baslar.
+const briefSections = [
+  "# Code Task Brief",
+  "## Amaç",
+  "## Kesin Kararlar",
+  "## Yapılacaklar",
+  "## Yapılmayacaklar",
+  "## Kısıtlar",
+  "## Kabul Kriterleri",
+  "## Roller",
+  "## Test ve Doğrulama"
+];
+
+export async function generateBrief(history: ChatMessage[], message?: string, preferred?: PlannerSelection) {
+  const order: PlannerId[] =
+    preferred && preferred !== "auto" && preferred !== "all" ? [preferred] : ["codex", "claude", "antigravity"];
+  for (const planner of order) {
+    try {
+      await assertPlannerReady(planner);
+      const output = cleanPlannerOutput(await callPlannerRaw(planner, buildBriefPrompt(history, message)));
+      if (output && output.length > 20) {
+        return { brief: ensureBriefShape(output), planner, modelLabel: modelLabel(planner) };
+      }
+    } catch {
+      // Sonraki ajana gec.
+    }
+  }
+  return { brief: localBriefTemplate(history, message), planner: "local", modelLabel: "Yerel şablon" };
+}
+
+function buildBriefPrompt(history: ChatMessage[], message?: string) {
+  return [
+    "Sen Orkestra moderatörüsün. Aşağıdaki sohbetten bir CODE TASK BRIEF (kod görev özeti) çıkar.",
+    "Yalnızca üzerinde KESİN karar verilenleri yaz; sohbette vazgeçilen, denenip iptal edilen fikirleri DAHİL ETME.",
+    "Çıktıyı tam olarak şu Markdown başlıklarıyla, her başlık altını madde madde (kısa, uygulanabilir) doldurarak ver:",
+    "",
+    ...briefSections,
+    "",
+    "Açıklama metni veya giriş cümlesi ekleme; doğrudan brief ile başla. Türkçe yaz.",
+    "",
+    "Sohbet geçmişi:",
+    formatHistory(history) || "(boş)",
+    message ? `\nSon istek: ${message}` : ""
+  ].join("\n");
+}
+
+// CLI brief'i basliksiz/eksik dondurdaginde en azindan iskeleti garanti et.
+function ensureBriefShape(output: string) {
+  if (output.includes("## Amaç") || output.includes("# Code Task Brief")) return output.trim();
+  return `${briefSections[0]}\n\n## Amaç\n${output.trim()}`;
+}
+
+function localBriefTemplate(history: ChatMessage[], message?: string) {
+  const goal = message || history.filter((m) => m.role === "user").slice(-1)[0]?.content || "(belirtilmedi)";
+  return [
+    "# Code Task Brief",
+    "",
+    "## Amaç",
+    goal,
+    "",
+    "## Kesin Kararlar",
+    "- (CLI brief üretemedi; lütfen elle doldur)",
+    "",
+    "## Yapılacaklar",
+    "- ",
+    "",
+    "## Yapılmayacaklar",
+    "- ",
+    "",
+    "## Kısıtlar",
+    "- Local-first çalışmalı.",
+    "",
+    "## Kabul Kriterleri",
+    "- ",
+    "",
+    "## Roller",
+    "- Planlayıcı / Kodlayıcı / Denetçi / Düzeltici",
+    "",
+    "## Test ve Doğrulama",
+    "- "
+  ].join("\n");
+}
+
 export async function getCliStatuses(): Promise<CliToolStatus[]> {
   const [claude, codex, antigravity] = await Promise.all([
     getClaudeStatus(),

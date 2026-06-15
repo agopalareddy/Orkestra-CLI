@@ -65,6 +65,18 @@ export interface CreateRunRequest {
   prompt: string;
 }
 
+export interface BriefRequest {
+  history: ChatMessage[];
+  message?: string;
+  planner?: "claude" | "codex" | "antigravity" | "auto";
+}
+
+export interface BriefResponse {
+  brief: string;
+  planner: string;
+  modelLabel: string;
+}
+
 export interface SaveAgentRequest {
   name: string;
   role: AgentRole;

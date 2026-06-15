@@ -27,6 +27,7 @@ import {
   Sparkles,
   SquareTerminal,
   Sun,
+  Moon,
   Zap
 } from "lucide-react";
 import type {
@@ -134,6 +135,16 @@ function deriveTitle(messages: ChatMessage[]) {
 }
 
 function App() {
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    const saved = localStorage.getItem("orkestra.theme");
+    return saved === "dark" ? "dark" : "light";
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("orkestra.theme", theme);
+  }, [theme]);
+
   const [agents, setAgents] = useState<Agent[]>([]);
   const [runs, setRuns] = useState<Run[]>([]);
   const [activeRun, setActiveRun] = useState<Run | null>(null);
@@ -559,10 +570,19 @@ function App() {
     <main className="appShell">
       <header className="appHeader">
         <div className="brand">
+          <img src="/logo.png" alt="Orkestra Logo" className="logo" />
           <strong>Orkestra</strong>
           <span>v2.0 Chat</span>
         </div>
         <div className="headerActions">
+          <button
+            className="iconButton themeToggle"
+            onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))}
+            title={theme === "light" ? "Koyu Temaya Geç" : "Açık Temaya Geç"}
+            style={{ width: "32px", height: "32px", padding: 0 }}
+          >
+            {theme === "light" ? <Moon size={16} /> : <Sun size={16} />}
+          </button>
           <div className="languageSwitch">
             <button className="active">TR</button>
             <button>EN</button>
