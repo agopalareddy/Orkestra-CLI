@@ -290,28 +290,43 @@ function readAgyResponseFromTranscript(path: string, startedAt: number) {
   return undefined;
 }
 
-// Claude'u headless `-p` modunda calistirir. Paylasilan sohbet gecmisini (diger
-// AI'larin mesajlari dahil) her cagrida prompt'a koyar; boylece Claude tum
-// konusmayi gorur. Cagrilar sirayla calistirilir ki ust uste binmesin.
+// Claude cagrilari sirayla calistirilir ki ayni anda ust uste binmesin.
 let claudeQueue: Promise<unknown> = Promise.resolve();
-function callClaude(message: string, history: ChatMessage[], model?: string, effort?: EffortLevel) {
-  const run = claudeQueue.then(
-    () => sendClaude(message, history, model, effort),
-    () => sendClaude(message, history, model, effort)
-  );
-  claudeQueue = run.then(
-    () => undefined,
-    () => undefined
-  );
-  return run;
+
+// Bir planner'a HAZIR bir prompt gonderir. Sohbet akisi prompt'u buildPlannerPrompt/
+// buildClaudePrompt ile kurar; Tartisma modu ise kendi debate prompt'unu kurup buraya verir.
+function callPlannerRaw(id: PlannerId, prompt: string, model?: string, effort?: EffortLevel): Promise<string> {
+  if (id === "claude") {
+    const run = claudeQueue.then(() => runClaude(prompt, model, effort), () => runClaude(prompt, model, effort));
+    claudeQueue = run.then(() => undefined, () => undefined);
+    return run;
+  }
+  if (id === "antigravity") {
+    const args = model && model !== "default" ? ["--model", model, "-p", prompt] : ["-p", prompt];
+    const startedAt = Date.now();
+    return runTool("agy", args, "", plannerTimeoutMs)
+      .then(async (output) =>
+        output.trim()
+        || (await waitForTranscript(() => readLatestAgyResponse(startedAt), 8_000))
+        || "Antigravity cevap verdi ancak transcript ciktisi okunamadi."
+      )
+      .catch(async (error) => {
+        const transcript = await waitForTranscript(() => readLatestAgyResponse(startedAt), 8_000);
+        if (transcript) return transcript;
+        throw error;
+      });
+  }
+  const effortArgs = effort ? ["-c", `model_reasoning_effort="${effort}"`] : [];
+  const modelArgs = model && model !== "default" ? ["-m", model] : [];
+  return runTool("codex", ["exec", "--ephemeral", "--json", ...effortArgs, ...modelArgs, "-"], prompt, plannerTimeoutMs);
 }
 
-async function sendClaude(message: string, history: ChatMessage[], model?: string, effort?: EffortLevel) {
+// Claude'u headless `-p` modunda calistirir. Prompt stdin'den verilir: Windows'ta
+// cmd.exe cok satirli argumani ilk satirda keser; stdin guvenle tasir.
+async function runClaude(prompt: string, model?: string, effort?: EffortLevel) {
   const modelArgs = model && model !== "default" ? ["--model", model] : [];
-  // Prompt'u argüman yerine stdin'den ver: Windows'ta cmd.exe çok satırlı argümanı
-  // ilk satırda kesiyor; stdin çok satırlı metni güvenle taşır.
   const args = ["-p", "--effort", effort ?? "low", ...modelArgs];
-  return runTool("claude", args, buildClaudePrompt(message, history), claudeTimeoutMs);
+  return runTool("claude", args, prompt, claudeTimeoutMs);
 }
 
 function buildClaudePrompt(message: string, history: ChatMessage[]) {
@@ -358,32 +373,119 @@ function loginCommand(id: PlannerId) {
 }
 
 function callPlanner(id: PlannerId, message: string, history: ChatMessage[], model?: string, effort?: EffortLevel) {
-  if (id === "claude") {
-    return callClaude(message, history, model, effort);
+  const prompt = id === "claude" ? buildClaudePrompt(message, history) : buildPlannerPrompt(message, history);
+  return callPlannerRaw(id, prompt, model, effort);
+}
+
+// ----- Tartisma (Kurul) modu -----
+// Secilen ajanlar sirayla, o ana kadarki tum tartismayi gorerek birbirlerine cevap
+// verir (round-robin). Her ajan cevabi tamamlandikca yield edilir; sonunda Orkestra
+// bir karar ozeti cikarir. Maliyet yuksek oldugundan tur sayisi 1-3 ile sinirlidir.
+export type DebateTurn = { planner: PlannerId; modelLabel: string; content: string };
+export type DebateEvent =
+  | { type: "message"; planner: PlannerId; modelLabel: string; content: string; round: number }
+  | { type: "summary"; content: string }
+  | { type: "error"; planner: PlannerId; modelLabel: string; message: string }
+  | { type: "done" };
+
+export async function* runDebate(
+  participants: PlannerId[],
+  message: string,
+  history: ChatMessage[],
+  rounds: number,
+  model?: string,
+  effort?: EffortLevel
+): AsyncGenerator<DebateEvent> {
+  const active: PlannerId[] = [];
+  for (const planner of participants) {
+    try {
+      await assertPlannerReady(planner);
+      active.push(planner);
+    } catch {
+      // Limitli veya giris yapilmamis ajan tartismadan cikarilir.
+    }
   }
-  const prompt = buildPlannerPrompt(message, history);
-  if (id === "antigravity") {
-    const args = model && model !== "default"
-      ? ["--model", model, "-p", prompt]
-      : ["-p", prompt];
-    const startedAt = Date.now();
-    return runTool("agy", args, "", plannerTimeoutMs)
-      .then(async (output) =>
-        output.trim()
-        || await waitForTranscript(() => readLatestAgyResponse(startedAt), 8_000)
-        || "Antigravity cevap verdi ancak transcript ciktisi okunamadi."
-      )
-      .catch(async (error) => {
-        const transcript = await waitForTranscript(() => readLatestAgyResponse(startedAt), 8_000);
-        if (transcript) return transcript;
-        throw error;
-      });
+  if (active.length < 2) {
+    yield { type: "error", planner: active[0] ?? "claude", modelLabel: "Sistem", message: "Tartışma için en az iki doğrulanmış ajan gerekli." };
+    yield { type: "done" };
+    return;
   }
-  // Codex: muhakeme efor seviyesini config ile ayarla (low/medium/high).
-  const effortArgs = effort ? ["-c", `model_reasoning_effort="${effort}"`] : [];
-  const modelArgs = model && model !== "default" ? ["-m", model] : [];
-  const args = ["exec", "--ephemeral", "--json", ...effortArgs, ...modelArgs, "-"];
-  return runTool("codex", args, prompt, plannerTimeoutMs);
+
+  const turns: DebateTurn[] = [];
+  const safeRounds = Math.min(3, Math.max(1, rounds));
+  for (let round = 1; round <= safeRounds; round++) {
+    for (const planner of active) {
+      const prompt = buildDebatePrompt(planner, message, history, turns, round, safeRounds, active);
+      try {
+        const content = cleanPlannerOutput(await callPlannerRaw(planner, prompt, model, effort));
+        turns.push({ planner, modelLabel: modelLabel(planner), content });
+        yield { type: "message", planner, modelLabel: modelLabel(planner), content, round };
+      } catch (error) {
+        const raw = error instanceof Error ? error.message : String(error);
+        yield { type: "error", planner, modelLabel: modelLabel(planner), message: cleanPlannerOutput(raw) };
+      }
+    }
+  }
+
+  if (turns.length) {
+    const summarizer = active[0];
+    try {
+      const summary = cleanPlannerOutput(await callPlannerRaw(summarizer, buildDebateSummaryPrompt(message, turns), model, effort));
+      yield { type: "summary", content: summary };
+    } catch {
+      // Ozet basarisizsa sessiz gec; ham tartisma yine de kullanicida.
+    }
+  }
+  yield { type: "done" };
+}
+
+function buildDebatePrompt(
+  planner: PlannerId,
+  message: string,
+  history: ChatMessage[],
+  turns: DebateTurn[],
+  round: number,
+  totalRounds: number,
+  participants: PlannerId[]
+) {
+  const others = participants.filter((p) => p !== planner).map(label).join(", ");
+  const debateSoFar = turns.length
+    ? turns.map((turn) => `${turn.modelLabel}: ${turn.content}`).join("\n\n")
+    : "(henüz kimse konuşmadı, tartışmayı sen açıyorsun)";
+  return [
+    `Sen ${modelLabel(planner)} olarak Orkestra'da bir KURUL TARTIŞMASInın katılımcısısın.`,
+    `Diğer katılımcılar: ${others}. Tur ${round}/${totalRounds}.`,
+    "Amaç birlikte en iyi kararı bulmak. Diğer ajanların söylediklerine DOĞRUDAN cevap ver: katıldığın/katılmadığın noktaları belirt, eksikleri tamamla, alternatif sun.",
+    "Kısa ve öz konuş (en fazla birkaç paragraf), kendini tekrarlama, sadede gel. Türkçe yaz.",
+    "",
+    "Konuşulan asıl konu / kullanıcı isteği:",
+    message,
+    "",
+    "Önceki sohbet geçmişi:",
+    formatHistory(history) || "(boş)",
+    "",
+    "Şu ana kadarki tartışma:",
+    debateSoFar,
+    "",
+    `Şimdi ${modelLabel(planner)} olarak sıradaki katkını yap:`
+  ].join("\n");
+}
+
+function buildDebateSummaryPrompt(message: string, turns: DebateTurn[]) {
+  const transcript = turns.map((turn) => `${turn.modelLabel}: ${turn.content}`).join("\n\n");
+  return [
+    "Sen Orkestra moderatörüsün. Aşağıda birden fazla AI ajanının bir konuyu tartıştığı kayıt var.",
+    "Bu tartışmadan ORTAK KARAR ÖZETİ çıkar. Şunları içersin:",
+    "- Üzerinde uzlaşılan noktalar",
+    "- Anlaşmazlık varsa kısa not",
+    "- Önerilen nihai yaklaşım / yapılacaklar (madde madde)",
+    "Kısa, net ve Türkçe yaz. Yeni tartışma açma; sadece özetle.",
+    "",
+    `Asıl konu: ${message}`,
+    "",
+    "Tartışma kaydı:",
+    transcript
+  ].join("\n");
 }
 
 async function assertPlannerReady(id: PlannerId) {

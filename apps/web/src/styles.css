@@ -503,11 +503,30 @@ textarea:focus {
 
 .chatMessages {
   min-height: 0;
-  overflow: auto;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 4px;
+  padding: 4px 8px 4px 4px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.25) transparent;
+}
+
+.chatMessages::-webkit-scrollbar {
+  width: 6px;
+}
+
+.chatMessages::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.chatMessages::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.25);
+  border-radius: 999px;
+}
+
+.chatMessages::-webkit-scrollbar-thumb:hover {
+  background: rgba(129, 140, 248, 0.5);
 }
 
 .chatBubble {

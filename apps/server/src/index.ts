@@ -12,11 +12,12 @@ import {
   detectPipelineIntent,
   getCliStatuses,
   logoutCli,
+  runDebate,
   runPlannerChat,
   startLoginCli,
   testCli
 } from "./cli";
-import type { Agent, ChatRequest, CreateRunRequest, SaveAgentRequest } from "../../../packages/shared/types";
+import type { Agent, ChatMessage, ChatRequest, CreateRunRequest, EffortLevel, SaveAgentRequest } from "../../../packages/shared/types";
 
 const config = getConfig();
 const store = new Store(config);
