@@ -53,7 +53,7 @@ app.post<{ Body: ChatRequest }>("/api/chat", async (request, reply) => {
   const augmentedMessage = attachments.length
     ? `${message}\n\n[Ekli görsel dosyaları — bunları oku ve yanıtında dikkate al:\n${attachments.join("\n")}]`
     : message;
-  const result = await runPlannerChat(request.body.planner ?? "auto", augmentedMessage, request.body.history ?? [], request.body.model);
+  const result = await runPlannerChat(request.body.planner ?? "auto", augmentedMessage, request.body.history ?? [], request.body.model, request.body.effort);
   const action = detectPipelineIntent(message) ? "suggest_pipeline" : "none";
   const createdAt = new Date().toISOString();
   const messages = result.messages?.map((item) => ({

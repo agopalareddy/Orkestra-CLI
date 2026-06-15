@@ -2,7 +2,7 @@ import { execFile, spawn } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import type { ChatMessage, CliToolStatus } from "../../../packages/shared/types";
+import type { ChatMessage, CliToolStatus, EffortLevel } from "../../../packages/shared/types";
 import { getModelOptions, getUsageFor } from "./usage";
 
 const exec = promisify(execFile);
@@ -18,7 +18,8 @@ export async function runPlannerChat(
   preferred: PlannerSelection,
   message: string,
   history: ChatMessage[],
-  model?: string
+  model?: string,
+  effort?: EffortLevel
 ) {
   if (preferred === "all") {
     const statuses = await getCliStatuses();
@@ -34,7 +35,7 @@ export async function runPlannerChat(
         error: "Doğrulanmış CLI yok."
       };
     }
-    const results = await Promise.all(planners.map((planner) => runSinglePlanner(planner, message, history, model)));
+    const results = await Promise.all(planners.map((planner) => runSinglePlanner(planner, message, history, model, effort)));
     const allFailed = results.every((result) => result.usedFallback);
     return {
       planner: "all",
@@ -57,7 +58,7 @@ export async function runPlannerChat(
   for (const planner of order) {
     try {
       await assertPlannerReady(planner);
-      const output = await callPlanner(planner, message, history, model);
+      const output = await callPlanner(planner, message, history, model, effort);
       return {
         planner,
         modelLabel: modelLabel(planner),
@@ -88,10 +89,10 @@ export async function runPlannerChat(
   };
 }
 
-async function runSinglePlanner(planner: PlannerId, message: string, history: ChatMessage[], model?: string) {
+async function runSinglePlanner(planner: PlannerId, message: string, history: ChatMessage[], model?: string, effort?: EffortLevel) {
   try {
     await assertPlannerReady(planner);
-    const output = cleanPlannerOutput(await callPlanner(planner, message, history, model));
+    const output = cleanPlannerOutput(await callPlanner(planner, message, history, model, effort));
     return {
       planner,
       modelLabel: modelLabel(planner),
@@ -293,10 +294,10 @@ function readAgyResponseFromTranscript(path: string, startedAt: number) {
 // AI'larin mesajlari dahil) her cagrida prompt'a koyar; boylece Claude tum
 // konusmayi gorur. Cagrilar sirayla calistirilir ki ust uste binmesin.
 let claudeQueue: Promise<unknown> = Promise.resolve();
-function callClaude(message: string, history: ChatMessage[], model?: string) {
+function callClaude(message: string, history: ChatMessage[], model?: string, effort?: EffortLevel) {
   const run = claudeQueue.then(
-    () => sendClaude(message, history, model),
-    () => sendClaude(message, history, model)
+    () => sendClaude(message, history, model, effort),
+    () => sendClaude(message, history, model, effort)
   );
   claudeQueue = run.then(
     () => undefined,
@@ -305,11 +306,11 @@ function callClaude(message: string, history: ChatMessage[], model?: string) {
   return run;
 }
 
-async function sendClaude(message: string, history: ChatMessage[], model?: string) {
+async function sendClaude(message: string, history: ChatMessage[], model?: string, effort?: EffortLevel) {
   const modelArgs = model && model !== "default" ? ["--model", model] : [];
   // Prompt'u argüman yerine stdin'den ver: Windows'ta cmd.exe çok satırlı argümanı
   // ilk satırda kesiyor; stdin çok satırlı metni güvenle taşır.
-  const args = ["-p", "--effort", "low", ...modelArgs];
+  const args = ["-p", "--effort", effort ?? "low", ...modelArgs];
   return runTool("claude", args, buildClaudePrompt(message, history), claudeTimeoutMs);
 }
 
@@ -356,9 +357,9 @@ function loginCommand(id: PlannerId) {
   return "agy login";
 }
 
-function callPlanner(id: PlannerId, message: string, history: ChatMessage[], model?: string) {
+function callPlanner(id: PlannerId, message: string, history: ChatMessage[], model?: string, effort?: EffortLevel) {
   if (id === "claude") {
-    return callClaude(message, history, model);
+    return callClaude(message, history, model, effort);
   }
   const prompt = buildPlannerPrompt(message, history);
   if (id === "antigravity") {
@@ -378,9 +379,10 @@ function callPlanner(id: PlannerId, message: string, history: ChatMessage[], mod
         throw error;
       });
   }
-  const args = model && model !== "default"
-    ? ["exec", "--ephemeral", "--json", "-m", model, "-"]
-    : ["exec", "--ephemeral", "--json", "-"];
+  // Codex: muhakeme efor seviyesini config ile ayarla (low/medium/high).
+  const effortArgs = effort ? ["-c", `model_reasoning_effort="${effort}"`] : [];
+  const modelArgs = model && model !== "default" ? ["-m", model] : [];
+  const args = ["exec", "--ephemeral", "--json", ...effortArgs, ...modelArgs, "-"];
   return runTool("codex", args, prompt, plannerTimeoutMs);
 }
 

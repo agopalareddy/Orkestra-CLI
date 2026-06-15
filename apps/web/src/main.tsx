@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
+  ArrowUp,
   Bot,
   CheckCircle2,
   Circle,
@@ -16,6 +17,7 @@ import {
   Plus,
   RefreshCw,
   RotateCcw,
+  Search,
   Send,
   Trash2,
   X,
@@ -121,6 +123,11 @@ function App() {
   const [conversations, setConversations] = useState<StoredConversation[]>([]);
   const [conversationId, setConversationId] = useState<string>(() => crypto.randomUUID());
   const [selectedEffort, setSelectedEffort] = useState<"low" | "medium" | "high">("low");
+  const [chatHeight, setChatHeight] = useState<number>(() => {
+    const saved = Number(localStorage.getItem("orkestra.chatHeight"));
+    return Number.isFinite(saved) && saved >= 280 ? saved : 600;
+  });
+  const resizeRef = useRef<{ startY: number; startH: number } | null>(null);
   const [selectedPlanner, setSelectedPlanner] = useState<PlannerChoice>("codex");
   const [selectedModel, setSelectedModel] = useState("default");
   const [streamItems, setStreamItems] = useState<StreamItem[]>([]);
@@ -227,6 +234,25 @@ function App() {
       return next;
     });
     if (id === conversationId) newChat();
+  }
+
+  useEffect(() => {
+    localStorage.setItem("orkestra.chatHeight", String(chatHeight));
+  }, [chatHeight]);
+
+  function onResizeStart(event: React.PointerEvent<HTMLDivElement>) {
+    resizeRef.current = { startY: event.clientY, startH: chatHeight };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function onResizeMove(event: React.PointerEvent<HTMLDivElement>) {
+    if (!resizeRef.current) return;
+    const delta = event.clientY - resizeRef.current.startY;
+    setChatHeight(Math.min(1000, Math.max(280, resizeRef.current.startH + delta)));
+  }
+
+  function onResizeEnd() {
+    resizeRef.current = null;
   }
 
   useEffect(() => {
@@ -447,6 +473,7 @@ function App() {
         </aside>
 
         <section className="centerColumn">
+          <div className="chatWrap" style={{ height: chatHeight }}>
           <ChatPanel
             messages={messages}
             value={chatInput}
@@ -465,8 +492,10 @@ function App() {
             onAddImage={(file) => void addImage(file)}
             onRemoveImage={removeImage}
             conversations={conversations}
+            activeConversationId={conversationId}
             onNewChat={newChat}
             onOpenConversation={openConversation}
+            onDeleteConversation={deleteConversation}
             onSend={(text) => void sendChat(text)}
             onClear={() => {
               setMessages([welcomeMessage]);
@@ -476,6 +505,16 @@ function App() {
             onStartPipeline={(prompt) => void startRun(prompt)}
             onDismissPipeline={() => setSuggestedPrompt(null)}
           />
+          </div>
+          <div
+            className="rowResizer"
+            onPointerDown={onResizeStart}
+            onPointerMove={onResizeMove}
+            onPointerUp={onResizeEnd}
+            title="Sürükleyerek yeniden boyutlandır"
+          >
+            <span />
+          </div>
           <StreamPanel items={streamItems} />
         </section>
       </section>
@@ -644,8 +683,10 @@ function ChatPanel({
   onAddImage,
   onRemoveImage,
   conversations,
+  activeConversationId,
   onNewChat,
   onOpenConversation,
+  onDeleteConversation,
   onSend,
   onClear,
   onStartPipeline,
@@ -668,8 +709,10 @@ function ChatPanel({
   onAddImage: (file: File) => void;
   onRemoveImage: (path: string) => void;
   conversations: StoredConversation[];
+  activeConversationId: string;
   onNewChat: () => void;
   onOpenConversation: (id: string) => void;
+  onDeleteConversation: (id: string) => void;
   onSend: (text?: string) => void;
   onClear: () => void;
   onStartPipeline: (prompt: string) => void;
@@ -677,6 +720,23 @@ function ChatPanel({
 }) {
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const [showHistory, setShowHistory] = useState(false);
+  const [historyQuery, setHistoryQuery] = useState("");
+  const [historyIndex, setHistoryIndex] = useState(0);
+
+  const filteredConvos = conversations.filter((convo) =>
+    convo.title.toLowerCase().includes(historyQuery.trim().toLowerCase())
+  );
+  const activeConvo = filteredConvos.find((convo) => convo.id === activeConversationId);
+  const recentConvos = filteredConvos.filter((convo) => convo.id !== activeConversationId);
+  const flatConvos = activeConvo ? [activeConvo, ...recentConvos] : recentConvos;
+
+  function openHighlighted() {
+    const target = flatConvos[Math.min(historyIndex, flatConvos.length - 1)];
+    if (target) {
+      onOpenConversation(target.id);
+      setShowHistory(false);
+    }
+  }
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [listening, setListening] = useState(false);
   const [liveTranscript, setLiveTranscript] = useState("");
@@ -754,31 +814,20 @@ function ChatPanel({
             <Plus size={15} />
             Yeni
           </button>
-          <div className="historyWrap">
-            <button className="ghostButton" onClick={() => setShowHistory((open) => !open)} title="Geçmiş sohbetler">
-              <History size={15} />
-              Geçmiş
-            </button>
-            {showHistory && (
-              <div className="historyPopover" onMouseLeave={() => setShowHistory(false)}>
-                {conversations.length === 0 && <span className="historyEmpty">Henüz sohbet yok</span>}
-                {conversations.map((convo) => (
-                  <button
-                    key={convo.id}
-                    className="historyItem"
-                    onClick={() => {
-                      onOpenConversation(convo.id);
-                      setShowHistory(false);
-                    }}
-                  >
-                    <MessageCircle size={13} />
-                    <span>{convo.title}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-          <button onClick={onClear}>Temizle</button>
+          <button
+            className="ghostButton"
+            onClick={() => {
+              setHistoryQuery("");
+              setShowHistory(true);
+            }}
+            title="Geçmiş sohbetler"
+          >
+            <History size={15} />
+            Geçmiş
+          </button>
+          <button className="ghostButton" onClick={onClear} title="Sohbeti temizle">
+            Temizle
+          </button>
         </div>
       </div>
 
@@ -826,7 +875,7 @@ function ChatPanel({
         <div ref={bottomRef} />
       </div>
 
-      <div className="chatComposer">
+      <div className={`composerBox${listening ? " recording" : ""}`}>
         {attachments.length > 0 && (
           <div className="attachmentRow">
             {attachments.map((item) => (
@@ -860,18 +909,19 @@ function ChatPanel({
               ))}
             </div>
             <span className="voiceText">{liveTranscript || "Dinleniyor..."}</span>
-            <button className="iconButton voiceCancel" onClick={() => stopVoice(false)} title="İptal">
-              <X size={16} />
+            <button className="iconRound voiceCancel" onClick={() => stopVoice(false)} title="İptal">
+              <X size={17} />
             </button>
-            <button className="iconButton voiceConfirm" onClick={() => stopVoice(true)} title="Gönder">
-              <Send size={16} />
+            <button className="iconRound sendCircle" onClick={() => stopVoice(true)} title="Gönder">
+              <ArrowUp size={18} />
             </button>
           </div>
         ) : (
           <>
             <textarea
+              className="composerInput"
               value={value}
-              placeholder="Mesaj yazın... (Ctrl+Enter gönder, Ctrl+V ile görsel yapıştır)"
+              placeholder="Bir şey sorun veya görev verin…  (Ctrl+Enter gönder · Ctrl+V görsel yapıştır)"
               onChange={(event) => onChange(event.target.value)}
               onPaste={(event) => {
                 const images = Array.from(event.clipboardData.items)
@@ -890,62 +940,183 @@ function ChatPanel({
                 }
               }}
             />
-            <div className="composerButtons">
-              <button className="iconButton" onClick={() => fileInputRef.current?.click()} title="Görsel ekle">
-                <ImagePlus size={18} />
-              </button>
-              {voiceSupported && (
-                <button className="iconButton" onClick={startVoice} title="Sesle yaz">
-                  <Mic size={18} />
+            <div className="composerBar">
+              <div className="composerBarLeft">
+                <button className="iconRound" onClick={() => fileInputRef.current?.click()} title="Görsel ekle">
+                  <Plus size={18} />
                 </button>
-              )}
-              <button className="primary" disabled={(!value.trim() && !attachments.length) || thinking || !plannerOptions.length} onClick={() => onSend()}>
-                <Send size={16} />
-                Gönder
-              </button>
+                <select
+                  className="pill"
+                  value={plannerOptions.includes(selectedPlanner) ? selectedPlanner : ""}
+                  disabled={!plannerOptions.length}
+                  title="Hedef CLI"
+                  onChange={(event) => onPlannerChange(event.target.value as PlannerChoice)}
+                >
+                  {!plannerOptions.length && <option value="">CLI yok</option>}
+                  {plannerOptions.map((planner) => (
+                    <option key={planner} value={planner}>
+                      {plannerLabels[planner]}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  className="pill"
+                  value={selectedModel}
+                  title="Model"
+                  onChange={(event) => onModelChange(event.target.value)}
+                >
+                  {modelOptions.map((model) => (
+                    <option key={model.id} value={model.id} disabled={model.limited}>
+                      {model.label}
+                      {model.limited ? ` — limitli${model.resetsAt ? ` (${resetLabel(model.resetsAt)})` : ""}` : ""}
+                    </option>
+                  ))}
+                </select>
+                {(selectedPlanner === "claude" || selectedPlanner === "codex") && (
+                  <select
+                    className="pill"
+                    value={selectedEffort}
+                    title="Muhakeme eforu"
+                    onChange={(event) => onEffortChange(event.target.value as "low" | "medium" | "high")}
+                  >
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                  </select>
+                )}
+              </div>
+              <div className="composerBarRight">
+                {voiceSupported && (
+                  <button className="iconRound" onClick={startVoice} title="Sesle yaz">
+                    <Mic size={18} />
+                  </button>
+                )}
+                <button
+                  className="iconRound sendCircle"
+                  disabled={(!value.trim() && !attachments.length) || thinking || !plannerOptions.length}
+                  onClick={() => onSend()}
+                  title="Gönder"
+                >
+                  <ArrowUp size={18} />
+                </button>
+              </div>
             </div>
           </>
         )}
-        <div className="composerControls">
-          <label>
-            Hedef
-            <select
-              value={plannerOptions.includes(selectedPlanner) ? selectedPlanner : ""}
-              disabled={!plannerOptions.length}
-              onChange={(event) => onPlannerChange(event.target.value as PlannerChoice)}
-            >
-              {!plannerOptions.length && <option value="">Doğrulanmış CLI yok</option>}
-              {plannerOptions.map((planner) => (
-                <option key={planner} value={planner}>
-                  {plannerLabels[planner]}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Model
-            <select value={selectedModel} onChange={(event) => onModelChange(event.target.value)}>
-              {modelOptions.map((model) => (
-                <option key={model.id} value={model.id} disabled={model.limited}>
-                  {model.label}
-                  {model.limited ? ` — limitli${model.resetsAt ? ` (${resetLabel(model.resetsAt)})` : ""}` : ""}
-                </option>
-              ))}
-            </select>
-          </label>
-          {(selectedPlanner === "claude" || selectedPlanner === "codex") && (
-            <label>
-              Efor
-              <select value={selectedEffort} onChange={(event) => onEffortChange(event.target.value as "low" | "medium" | "high")}>
-                <option value="low">Low (hızlı)</option>
-                <option value="medium">Medium</option>
-                <option value="high">High (kaliteli)</option>
-              </select>
-            </label>
-          )}
-        </div>
       </div>
+
+      {showHistory && (
+        <div className="historyOverlay" onMouseDown={() => setShowHistory(false)}>
+          <div className="historyDialog" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="historySearch">
+              <Search size={16} />
+              <input
+                autoFocus
+                value={historyQuery}
+                placeholder="Sohbetlerde ara…"
+                onChange={(event) => {
+                  setHistoryQuery(event.target.value);
+                  setHistoryIndex(0);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") setShowHistory(false);
+                  else if (event.key === "ArrowDown") {
+                    event.preventDefault();
+                    setHistoryIndex((index) => Math.min(index + 1, flatConvos.length - 1));
+                  } else if (event.key === "ArrowUp") {
+                    event.preventDefault();
+                    setHistoryIndex((index) => Math.max(index - 1, 0));
+                  } else if (event.key === "Enter") {
+                    event.preventDefault();
+                    openHighlighted();
+                  }
+                }}
+              />
+            </div>
+            <div className="historyList">
+              {flatConvos.length === 0 && <div className="historyEmpty">Eşleşen sohbet yok.</div>}
+              {activeConvo && (
+                <>
+                  <div className="historyGroup">Şu anki</div>
+                  <HistoryRow
+                    convo={activeConvo}
+                    highlighted={historyIndex === 0}
+                    onOpen={() => {
+                      onOpenConversation(activeConvo.id);
+                      setShowHistory(false);
+                    }}
+                    onDelete={() => onDeleteConversation(activeConvo.id)}
+                  />
+                </>
+              )}
+              {recentConvos.length > 0 && <div className="historyGroup">Son sohbetler</div>}
+              {recentConvos.map((convo, index) => {
+                const flatIndex = activeConvo ? index + 1 : index;
+                return (
+                  <HistoryRow
+                    key={convo.id}
+                    convo={convo}
+                    highlighted={historyIndex === flatIndex}
+                    onOpen={() => {
+                      onOpenConversation(convo.id);
+                      setShowHistory(false);
+                    }}
+                    onDelete={() => onDeleteConversation(convo.id)}
+                  />
+                );
+              })}
+            </div>
+            <div className="historyFooter">
+              <span>↑↓ gezin</span>
+              <span>↵ seç</span>
+              <span>Esc kapat</span>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
+  );
+}
+
+function agoLabel(iso: string) {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return "";
+  const mins = Math.round((Date.now() - t) / 60000);
+  if (mins < 1) return "az önce";
+  if (mins < 60) return `${mins} dk önce`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} sa önce`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days} gün önce`;
+  return `${Math.floor(days / 7)} hafta önce`;
+}
+
+function HistoryRow({
+  convo,
+  highlighted,
+  onOpen,
+  onDelete
+}: {
+  convo: StoredConversation;
+  highlighted: boolean;
+  onOpen: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div className={`historyItem${highlighted ? " highlighted" : ""}`} onClick={onOpen}>
+      <span className="historyItemTitle">{convo.title}</span>
+      <span className="historyItemTime">{agoLabel(convo.updatedAt)}</span>
+      <button
+        className="historyItemDelete"
+        onClick={(event) => {
+          event.stopPropagation();
+          onDelete();
+        }}
+        title="Sil"
+      >
+        <Trash2 size={14} />
+      </button>
+    </div>
   );
 }
 
