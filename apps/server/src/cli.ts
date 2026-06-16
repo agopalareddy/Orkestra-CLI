@@ -417,45 +417,68 @@ function getAgyLogStatus() {
   }
 }
 
-function readLatestAgyResponse(startedAt: number) {
+// Tüm agy transcript.jsonl dosyalarını mtime'larıyla listeler.
+function listAgyTranscripts(): { path: string; mtimeMs: number }[] {
   const brainDir = join(process.env.USERPROFILE ?? "", ".gemini", "antigravity-cli", "brain");
-  if (!existsSync(brainDir)) return undefined;
+  if (!existsSync(brainDir)) return [];
+  try {
+    return readdirSync(brainDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => join(brainDir, entry.name, ".system_generated", "logs", "transcript.jsonl"))
+      .filter((path) => existsSync(path))
+      .map((path) => ({ path, mtimeMs: statSync(path).mtimeMs }));
+  } catch {
+    return [];
+  }
+}
 
-  const candidates = readdirSync(brainDir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => join(brainDir, entry.name, ".system_generated", "logs", "transcript.jsonl"))
-    .filter((path) => existsSync(path))
-    .map((path) => ({ path, mtimeMs: statSync(path).mtimeMs }))
-    .filter((item) => item.mtimeMs >= startedAt - 2_000)
+// Çalıştırma öncesi transcript mtime'larının anlık görüntüsü.
+function snapshotAgyTranscripts(): Map<string, number> {
+  return new Map(listAgyTranscripts().map((t) => [t.path, t.mtimeMs]));
+}
+
+// `before`'a göre YENİ ya da DEĞİŞEN transcript'i bulur, son MODEL içeriğini döndürür.
+function readNewestAgyResponse(before: Map<string, number>): string | undefined {
+  const changed = listAgyTranscripts()
+    .filter((t) => {
+      const prev = before.get(t.path);
+      return prev === undefined || t.mtimeMs > prev;
+    })
     .sort((a, b) => b.mtimeMs - a.mtimeMs);
-
-  for (const candidate of candidates) {
-    const response = readAgyResponseFromTranscript(candidate.path, startedAt);
-    if (response) return response;
+  for (const t of changed) {
+    const r = readLastModelContent(t.path);
+    if (r) return r;
   }
   return undefined;
 }
 
-function readAgyResponseFromTranscript(path: string, startedAt: number) {
-  const lines = readFileSync(path, "utf8").trim().split(/\r?\n/).reverse();
+// Transcript'teki MODEL'in gerçek metin cevabını döndürür.
+// Cevap `type:"PLANNER_RESPONSE"` (boş olmayan) entry'sindedir; GENERIC/RUN_COMMAND/VIEW_FILE/
+// CODE_ACTION gibi araç tipleri "Created At: …" metadata içerir, onları atla. En SONdakini al.
+function readLastModelContent(path: string): string | undefined {
+  let lines: string[];
+  try {
+    lines = readFileSync(path, "utf8").trim().split(/\r?\n/).reverse();
+  } catch {
+    return undefined;
+  }
+  let fallback: string | undefined;
   for (const line of lines) {
     try {
-      const parsed = JSON.parse(line) as {
-        source?: string;
-        type?: string;
-        status?: string;
-        created_at?: string;
-        content?: string;
-      };
-      if (parsed.created_at && Date.parse(parsed.created_at) < startedAt - 2_000) continue;
-      if (parsed.source === "MODEL" && parsed.status === "DONE" && parsed.content?.trim()) {
-        return parsed.content.trim();
+      const parsed = JSON.parse(line) as { source?: string; type?: string; content?: string };
+      if (parsed.source !== "MODEL") continue;
+      const content = parsed.content?.trim();
+      if (!content) continue;
+      if (parsed.type === "PLANNER_RESPONSE" && !/^Created At:/.test(content)) {
+        return content; // gerçek model cevabı
       }
+      // metadata değilse yedek olarak tut
+      if (!fallback && !/^Created At:/.test(content)) fallback = content;
     } catch {
       // Ignore partial or non-JSON transcript lines.
     }
   }
-  return undefined;
+  return fallback;
 }
 
 // Claude cagrilari sirayla calistirilir ki ayni anda ust uste binmesin.
@@ -470,16 +493,22 @@ function callPlannerRaw(id: PlannerId, prompt: string, model?: string, effort?: 
     return run;
   }
   if (id === "antigravity") {
+    // agy `-p <prompt>` cevabı STDOUT'a değil bir transcript dosyasına yazar; bu yüzden
+    // çıktıyı transcript'ten okuruz. Prompt agy.exe'ye doğrudan (cmd.exe'siz) argüman olarak
+    // gider, çok satırlı/uzun (≤32K) güvenle taşınır. `-p`'yi argümansız bırakmak HATA verir.
     const args = model && model !== "default" ? ["--model", model, "-p", prompt] : ["-p", prompt];
-    const startedAt = Date.now();
+    // Saat karşılaştırması yerine: çalıştırma ÖNCESİ transcript mtime'larını al; sonra
+    // YENİ ya da DEĞİŞEN transcript'i bul. Deterministik (clock skew/pencere sorunu yok).
+    const before = snapshotAgyTranscripts();
     return runTool("agy", args, "", plannerTimeoutMs)
-      .then(async (output) =>
-        output.trim()
-        || (await waitForTranscript(() => readLatestAgyResponse(startedAt), 8_000))
-        || "Antigravity cevap verdi ancak transcript ciktisi okunamadi."
-      )
+      .then(async (output) => {
+        const stdout = output.trim();
+        if (stdout && !/Usage of agy|flag needs an argument|Available subcommands/i.test(stdout)) return stdout;
+        const transcript = await waitForTranscript(() => readNewestAgyResponse(before), 25_000);
+        return transcript || "Antigravity cevap üretemedi (transcript bulunamadı).";
+      })
       .catch(async (error) => {
-        const transcript = await waitForTranscript(() => readLatestAgyResponse(startedAt), 8_000);
+        const transcript = await waitForTranscript(() => readNewestAgyResponse(before), 25_000);
         if (transcript) return transcript;
         throw error;
       });
@@ -604,21 +633,40 @@ export async function* runDebate(
 
   if (turns.length) {
     if (operator) {
-      // Operatör: tartışmayı 5 başlıklı yapılandırılmış analize çevirir.
+      // Analiz kartı KRİTİK: her zaman oluşmalı. Operatör → yedek ajan → turlardan kart.
+      const analysisPrompt = buildOperatorAnalysisPrompt(message, turns);
+      const isValid = (a: string) =>
+        a && a.trim().length > 30 &&
+        !/okunamad|yanıt vermedi|zaman aşımı|üretemedi|bulunamadı|Usage of agy|flag needs an argument|Available subcommands/i.test(a);
+
+      let analysis = "";
+      let analyst = operator;
+      // 1) Operatör.
       try {
-        const analysis = cleanPlannerOutput(
-          await callPlannerRaw(operator.cli, buildOperatorAnalysisPrompt(message, turns), operator.model, effort)
-        );
-        yield { type: "analysis", content: analysis, modelLabel: participantLabel(operator.cli, operator.model) };
+        analysis = cleanPlannerOutput(await callPlannerRaw(operator.cli, analysisPrompt, operator.model, effort));
       } catch {
-        // Analiz basarisizsa basit ozete dus.
-        try {
-          const summary = cleanPlannerOutput(await callPlannerRaw(operator.cli, buildDebateSummaryPrompt(message, turns), operator.model, effort));
-          yield { type: "summary", content: summary };
-        } catch {
-          // sessiz gec
+        analysis = "";
+      }
+      // 2) Operatör üretemezse: başka aktif (operatör olmayan) bir ajan dener.
+      if (!isValid(analysis)) {
+        const backup = active.find((p) => p.cli !== operator.cli) ?? active[0];
+        if (backup) {
+          try {
+            const out = cleanPlannerOutput(await callPlannerRaw(backup.cli, analysisPrompt, backup.model ?? model, effort));
+            if (isValid(out)) {
+              analysis = out;
+              analyst = backup;
+            }
+          } catch {
+            // sonraki adıma geç
+          }
         }
       }
+      // 3) Hâlâ yoksa: tartışma turlarından yapısal bir analiz kartı kur (boş bırakma).
+      if (!isValid(analysis)) {
+        analysis = buildFallbackAnalysis(message, turns);
+      }
+      yield { type: "analysis", content: analysis, modelLabel: participantLabel(analyst.cli, analyst.model) };
     } else {
       const summarizer = active[0];
       try {
@@ -746,6 +794,26 @@ function buildOperatorAnalysisPrompt(message: string, turns: DebateTurn[]) {
     "",
     "Tartışma kaydı:",
     transcript
+  ].join("\n");
+}
+
+// Operatör ve yedek ajan da analiz üretemezse: tartışma turlarından doğrudan yapısal
+// bir analiz kartı kurar. Kart her zaman oluşmalı (kritik), boş bırakılmaz.
+function buildFallbackAnalysis(message: string, turns: DebateTurn[]) {
+  const bySpeaker = turns.map((t) => {
+    const text = t.content.replace(/\s+/g, " ").trim();
+    return `- **${t.modelLabel}**: ${text.slice(0, 280)}${text.length > 280 ? "…" : ""}`;
+  });
+  return [
+    "## Ortak Görüş",
+    "Otomatik operatör analizi üretilemedi; aşağıda katılımcı görüşleri ham olarak derlenmiştir.",
+    "## Ayrıştığı Noktalar",
+    "(Katılımcı yanıtlarını karşılaştırarak değerlendirin.)",
+    "## Benzersiz Fikirler",
+    ...bySpeaker,
+    "## Önerilen Yaklaşım",
+    `- "${message}" görevini, yukarıdaki görüşlerin ortak yönlerini birleştirerek uygulayın.`,
+    "- Operatör/ekip bu derlemeyi temel alarak ilerleyebilir."
   ].join("\n");
 }
 

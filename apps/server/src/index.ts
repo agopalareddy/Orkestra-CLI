@@ -1,8 +1,9 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import * as pty from "node-pty";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve, extname, normalize } from "node:path";
 import { getConfig } from "./config";
 import { Store, defaultLimitPatterns } from "./db";
@@ -319,6 +320,65 @@ app.post<{ Params: { id: string } }>("/api/runs/:id/stop", async (request, reply
   const ok = runner.stop(request.params.id);
   if (!ok) return reply.code(409).send({ error: "Run is not active." });
   return { ok: true };
+});
+
+// Yeni proje klasörü oluşturur (workspaceDir altında, isimden türetilmiş benzersiz ad).
+app.post<{ Body: { name?: string } }>("/api/projects/create", async (request, reply) => {
+  const name = (request.body.name ?? "").trim();
+  const base = slug(name) || `proje-${randomUUID().slice(0, 6)}`;
+  let dir = join(config.workspaceDir, base);
+  let i = 2;
+  while (existsSync(dir)) dir = join(config.workspaceDir, `${base}-${i++}`);
+  mkdirSync(dir, { recursive: true });
+  return { workspacePath: resolve(dir), name: name || base };
+});
+
+// Proje klasörünü yeniden adlandırır (gerçek dizini taşır). Yeni mutlak yolu döndürür.
+app.post<{ Body: { path?: string; newName?: string } }>("/api/projects/rename", async (request, reply) => {
+  const current = request.body.path?.trim();
+  const newName = (request.body.newName ?? "").trim();
+  if (!current || !newName) return reply.code(400).send({ error: "path and newName are required" });
+  const workspaceRoot = resolve(config.workspaceDir);
+  const resolved = resolve(current);
+  if (resolved !== workspaceRoot && !resolved.startsWith(`${workspaceRoot}/`) && !resolved.startsWith(`${workspaceRoot}\\`)) {
+    return reply.code(403).send({ error: "Forbidden" });
+  }
+  if (!existsSync(resolved)) return reply.code(404).send({ error: "Folder not found" });
+  const base = slug(newName) || `proje-${randomUUID().slice(0, 6)}`;
+  let target = join(config.workspaceDir, base);
+  let i = 2;
+  while (existsSync(target) && resolve(target) !== resolved) target = join(config.workspaceDir, `${base}-${i++}`);
+  try {
+    if (resolve(target) !== resolved) renameSync(resolved, target);
+    return { workspacePath: resolve(target), name: newName };
+  } catch (error) {
+    return reply.code(500).send({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+// Çalışma klasörünü işletim sisteminin dosya yöneticisinde açar (Windows Explorer vb.).
+app.post<{ Body: { path?: string } }>("/api/open-folder", async (request, reply) => {
+  const requested = request.body.path?.trim();
+  if (!requested) return reply.code(400).send({ error: "Path is required" });
+  const workspaceRoot = resolve(config.workspaceDir);
+  const resolved = resolve(requested);
+  // Güvenlik: yalnızca workspace altındaki klasörler açılabilir.
+  if (resolved !== workspaceRoot && !resolved.startsWith(`${workspaceRoot}/`) && !resolved.startsWith(`${workspaceRoot}\\`)) {
+    return reply.code(403).send({ error: "Forbidden" });
+  }
+  if (!existsSync(resolved)) return reply.code(404).send({ error: "Folder not found" });
+  try {
+    if (process.platform === "win32") {
+      spawn("explorer.exe", [resolved], { detached: true, stdio: "ignore" }).unref();
+    } else if (process.platform === "darwin") {
+      spawn("open", [resolved], { detached: true, stdio: "ignore" }).unref();
+    } else {
+      spawn("xdg-open", [resolved], { detached: true, stdio: "ignore" }).unref();
+    }
+    return { ok: true };
+  } catch (error) {
+    return reply.code(500).send({ error: error instanceof Error ? error.message : String(error) });
+  }
 });
 
 app.get<{ Params: { id: string } }>("/api/runs/:id/events", async (request, reply) => {

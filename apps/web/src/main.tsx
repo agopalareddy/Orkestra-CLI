@@ -32,6 +32,7 @@ import {
   Mic,
   PanelRightOpen,
   PanelRightClose,
+  Pencil,
   Play,
   Plus,
   RefreshCw,
@@ -265,6 +266,20 @@ const uiText = {
     terminalTitle: "Live Agent Execution Console",
     elapsedSeconds: "seconds",
     explorer: "Explorer",
+    project: "Project",
+    projects: "Projects",
+    noProjectsDesc: "No projects yet. Create one or start from chat.",
+    projectNamePrompt: "Project name:",
+    renameProject: "Rename project",
+    renameProjectPrompt: "New project name (the real folder is renamed too):",
+    activeProject: "Active project",
+    noProjectYet: "No project (new)",
+    newProject: "New project",
+    newProjectTitle: "Start a fresh project (resets workspace)",
+    newSessionTitle: "New session in this project",
+    deleteProject: "Delete project",
+    deleteProjectConfirm: "Delete this project from the list? (files are not deleted)",
+    openInExplorer: "Open folder in file manager",
     preview: "Preview",
     openInBrowser: "Open in browser",
     refreshPreview: "Refresh",
@@ -292,6 +307,7 @@ const uiText = {
     operatorBuild: "Let operator build",
     teamWork: "Team work",
     debateDoneHint: "Debate finished. How should we proceed?",
+    working: "Working…",
     teamWorkTitle: "Team Work — Division of Labor",
     teamWorkDesc: "No planner needed (the plan was made in the chat). Pick the coding agents and an optional reviewer.",
     reviewerAgent: "Reviewer (checks fit to purpose)",
@@ -318,6 +334,7 @@ const uiText = {
     assignAgent: "Assign agent/model",
     assignByRole: "Auto (by role)",
     assignSpecificAgent: "Specific agent",
+    taskInstruction: "Task / instruction (e.g. \"you build the backend and the database\")",
     statusIdle: "Idle",
     statusQueued: "Queued",
     statusRunning: "Running",
@@ -467,6 +484,20 @@ const uiText = {
     terminalTitle: "Canlı Ajan İcra Konsolu",
     elapsedSeconds: "saniye",
     explorer: "Gezgin",
+    project: "Proje",
+    projects: "Projeler",
+    noProjectsDesc: "Henüz proje yok. Oluştur ya da sohbetten başlat.",
+    projectNamePrompt: "Proje adı:",
+    renameProject: "Projeyi yeniden adlandır",
+    renameProjectPrompt: "Yeni proje adı (gerçek klasör de yeniden adlandırılır):",
+    activeProject: "Aktif proje",
+    noProjectYet: "Proje yok (yeni)",
+    newProject: "Yeni Proje",
+    newProjectTitle: "Sıfırdan yeni proje (workspace sıfırlanır)",
+    newSessionTitle: "Bu projede yeni oturum",
+    deleteProject: "Projeyi sil",
+    deleteProjectConfirm: "Bu proje listeden silinsin mi? (dosyalar silinmez)",
+    openInExplorer: "Klasörü dosya yöneticisinde aç",
     preview: "Önizleme",
     openInBrowser: "Tarayıcıda aç",
     refreshPreview: "Yenile",
@@ -494,6 +525,7 @@ const uiText = {
     operatorBuild: "Operatöre Projeyi Yaptır",
     teamWork: "Ekip Çalışması",
     debateDoneHint: "Tartışma bitti. Nasıl ilerleyelim?",
+    working: "Çalışıyor…",
     teamWorkTitle: "Ekip Çalışması — İş Bölümü",
     teamWorkDesc: "Planlayıcı yok (plan sohbette yapıldı). Kod yazacak ajanları ve isteğe bağlı bir denetçiyi seç.",
     reviewerAgent: "Denetçi (amaca uygunluğu kontrol eder)",
@@ -520,6 +552,7 @@ const uiText = {
     assignAgent: "Ajan/model ata",
     assignByRole: "Otomatik (role göre)",
     assignSpecificAgent: "Belirli ajan",
+    taskInstruction: "Görev / talimat (ör. \"backend'i ve veritabanını sen yap\")",
     statusIdle: "Beklemede",
     statusQueued: "Sırada",
     statusRunning: "Çalışıyor",
@@ -580,10 +613,23 @@ const api = {
   }
 };
 
-type StoredConversation = { id: string; title: string; messages: ChatMessage[]; updatedAt: string };
+type StoredConversation = { id: string; title: string; messages: ChatMessage[]; updatedAt: string; workspacePath?: string | null; projectId?: string | null };
+// Proje: kalıcı bir kod tabanı/klasör. Her projenin kendi oturum (konuşma) geçmişi olur.
+type Project = { id: string; name: string; workspacePath: string; createdAt: string };
+const PROJECTS_KEY = "orkestra.projects";
 // Chat ve Code sekmelerinin geçmişleri ayrı saklanır.
 const CHAT_CONVERSATIONS_KEY = "orkestra.conversations.chat";
 const CODE_CONVERSATIONS_KEY = "orkestra.conversations.code";
+
+function loadProjects(): Project[] {
+  try {
+    const raw = localStorage.getItem(PROJECTS_KEY);
+    const parsed = raw ? (JSON.parse(raw) as Project[]) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
 
 function loadConversations(key: string): StoredConversation[] {
   try {
@@ -652,6 +698,18 @@ function App() {
     if (projectWorkspace) localStorage.setItem("orkestra.projectWorkspace", projectWorkspace);
     else localStorage.removeItem("orkestra.projectWorkspace");
   }, [projectWorkspace]);
+  // Proje katmanı: projeler listesi + aktif proje. Her projenin kendi oturum geçmişi var.
+  const [projects, setProjects] = useState<Project[]>(() => loadProjects());
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(
+    () => localStorage.getItem("orkestra.activeProjectId") || null
+  );
+  useEffect(() => {
+    if (activeProjectId) localStorage.setItem("orkestra.activeProjectId", activeProjectId);
+    else localStorage.removeItem("orkestra.activeProjectId");
+  }, [activeProjectId]);
+  function persistProjects(next: Project[]) {
+    localStorage.setItem(PROJECTS_KEY, JSON.stringify(next));
+  }
   // Chat ve Code geçmişleri ayrı: mesajlar, konuşma listesi ve aktif id ayrı tutulur.
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() => [welcomeMessageFor(language)]);
   const [codeMessages, setCodeMessages] = useState<ChatMessage[]>(() => [welcomeMessageFor(language)]);
@@ -811,11 +869,22 @@ function App() {
     key: string,
     msgs: ChatMessage[],
     id: string,
-    setConvos: React.Dispatch<React.SetStateAction<StoredConversation[]>>
+    setConvos: React.Dispatch<React.SetStateAction<StoredConversation[]>>,
+    workspacePath?: string | null,
+    projectId?: string | null
   ) {
     if (!msgs.some((message) => message.role === "user")) return;
-    const convo: StoredConversation = { id, title: deriveTitle(msgs), messages: msgs, updatedAt: new Date().toISOString() };
     setConvos((current) => {
+      // Proje bazlı: kod konuşmasının workspace yolunu ve projesini sakla (yoksa eskisini koru).
+      const prev = current.find((item) => item.id === id);
+      const convo: StoredConversation = {
+        id,
+        title: deriveTitle(msgs),
+        messages: msgs,
+        updatedAt: new Date().toISOString(),
+        workspacePath: workspacePath ?? prev?.workspacePath ?? null,
+        projectId: projectId ?? prev?.projectId ?? null
+      };
       const next = [convo, ...current.filter((item) => item.id !== id)];
       saveConversations(key, next);
       return next;
@@ -827,9 +896,10 @@ function App() {
   }, [chatMessages, chatConvoId]);
 
   useEffect(() => {
-    persistConvo(CODE_CONVERSATIONS_KEY, codeMessages, codeConvoId, setCodeConvos);
-  }, [codeMessages, codeConvoId]);
+    persistConvo(CODE_CONVERSATIONS_KEY, codeMessages, codeConvoId, setCodeConvos, projectWorkspace, activeProjectId);
+  }, [codeMessages, codeConvoId, projectWorkspace, activeProjectId]);
 
+  // "Yeni" = aktif PROJE içinde yeni oturum (workspace korunur, dosya gezgini aynı projede kalır).
   function newChat() {
     setMessages([welcomeMessageFor(language)]);
     setSuggestedPrompt(null);
@@ -838,11 +908,108 @@ function App() {
     setCodeDebateDone(false);
     setLastAnalysis(null);
     setConversationId(crypto.randomUUID());
-    // Code modunda "Yeni" = yeni proje: kalıcı workspace ve aktif run sıfırlanır.
     if (isCodeView) {
-      setProjectWorkspace(null);
       setActiveRun(null);
       setEvents([]);
+      // projectWorkspace + activeProjectId korunur → yeni oturum aynı projede açılır.
+    }
+  }
+
+  // Yeni PROJE: aktif proje/workspace sıfırlanır, yeni boş oturum açılır.
+  function newProject() {
+    setActiveProjectId(null);
+    setProjectWorkspace(null);
+    setActiveRun(null);
+    setEvents([]);
+    setMessages([welcomeMessageFor(language)]);
+    setSuggestedPrompt(null);
+    setAttachments([]);
+    setNotice(null);
+    setCodeDebateDone(false);
+    setLastAnalysis(null);
+    setConversationId(crypto.randomUUID());
+  }
+
+  // Var olan bir projeye geç: workspace + oturum geçmişi o projeye döner.
+  function switchProject(id: string) {
+    const proj = projects.find((p) => p.id === id);
+    if (!proj) return;
+    setActiveProjectId(id);
+    setProjectWorkspace(proj.workspacePath);
+    setActiveRun(null);
+    setEvents([]);
+    setCodeDebateDone(false);
+    setLastAnalysis(null);
+    // Projenin en güncel oturumunu aç; yoksa yeni boş oturum.
+    const sessions = codeConvos.filter((c) => c.projectId === id);
+    if (sessions.length) {
+      const latest = sessions[0];
+      setCodeMessages(latest.messages.length ? latest.messages : [welcomeMessageFor(language)]);
+      setCodeConvoId(latest.id);
+    } else {
+      setCodeMessages([welcomeMessageFor(language)]);
+      setCodeConvoId(crypto.randomUUID());
+    }
+  }
+
+  function deleteProject(id: string) {
+    setProjects((cur) => {
+      const next = cur.filter((p) => p.id !== id);
+      persistProjects(next);
+      return next;
+    });
+    if (activeProjectId === id) newProject();
+  }
+
+  // Sol panelden manuel proje klasörü oluştur (gerçek dizin) ve ona geç.
+  async function createProject() {
+    const name = window.prompt(text.projectNamePrompt, "");
+    if (name === null) return;
+    try {
+      const res = await api.post<{ workspacePath: string; name: string }>("/api/projects/create", { name: name.trim() });
+      const proj: Project = { id: crypto.randomUUID(), name: res.name, workspacePath: res.workspacePath, createdAt: new Date().toISOString() };
+      setProjects((cur) => {
+        const next = [proj, ...cur];
+        persistProjects(next);
+        return next;
+      });
+      setActiveProjectId(proj.id);
+      setProjectWorkspace(proj.workspacePath);
+      setActiveRun(null);
+      setEvents([]);
+      setCodeMessages([welcomeMessageFor(language)]);
+      setCodeConvoId(crypto.randomUUID());
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  // Projeyi yeniden adlandır — GERÇEK klasör de yeniden adlandırılır (backend renameSync).
+  async function renameProject(id: string) {
+    const proj = projects.find((p) => p.id === id);
+    if (!proj) return;
+    const newName = window.prompt(text.renameProjectPrompt, proj.name);
+    if (newName === null || !newName.trim() || newName.trim() === proj.name) return;
+    try {
+      const res = await api.post<{ workspacePath: string; name: string }>("/api/projects/rename", {
+        path: proj.workspacePath,
+        newName: newName.trim()
+      });
+      const oldPath = proj.workspacePath;
+      setProjects((cur) => {
+        const next = cur.map((p) => (p.id === id ? { ...p, name: res.name, workspacePath: res.workspacePath } : p));
+        persistProjects(next);
+        return next;
+      });
+      // Eski yola bağlı oturumların workspace'ini güncelle.
+      setCodeConvos((cur) => {
+        const next = cur.map((c) => (c.workspacePath === oldPath ? { ...c, workspacePath: res.workspacePath } : c));
+        saveConversations(CODE_CONVERSATIONS_KEY, next);
+        return next;
+      });
+      if (activeProjectId === id) setProjectWorkspace(res.workspacePath);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -853,6 +1020,14 @@ function App() {
     setConversationId(id);
     setSuggestedPrompt(null);
     setAttachments([]);
+    setCodeDebateDone(false);
+    // Proje bazlı: kod oturumuna dönünce o projenin workspace + projesini geri yükle.
+    if (isCodeView) {
+      setProjectWorkspace(convo.workspacePath ?? null);
+      setActiveProjectId(convo.projectId ?? null);
+      setActiveRun(null);
+      setEvents([]);
+    }
   }
 
   function deleteConversation(id: string) {
@@ -936,7 +1111,19 @@ function App() {
           createdAt: event.createdAt
         }
       ]);
+      // Durum olaylarını activeRun'a yansıt (yoksa stop butonu açık kalır, banner "queued" donar).
+      if (event.type === "started") {
+        setActiveRun((cur) => (cur && cur.id === event.runId ? { ...cur, status: "running", activeStep: event.message } : cur));
+      }
+      if (event.type === "agent_step") {
+        setActiveRun((cur) => (cur && cur.id === event.runId ? { ...cur, activeStep: event.message } : cur));
+      }
       if (event.type === "completed" || event.type === "failed") {
+        setActiveRun((cur) =>
+          cur && cur.id === event.runId
+            ? { ...cur, status: event.type === "completed" ? "completed" : "failed", activeStep: event.type, completedAt: new Date().toISOString() }
+            : cur
+        );
         void refresh();
       }
     };
@@ -1177,6 +1364,28 @@ function App() {
     }
   }
 
+  // Çalışılan workspace için bir proje bulur ya da otomatik oluşturur; aktif yapar ve
+  // mevcut kod oturumunu o projeye etiketler. Proje açmadan başlatınca proje kendiliğinden oluşur.
+  function ensureProject(workspacePath: string, name: string) {
+    let proj = projects.find((p) => p.workspacePath === workspacePath);
+    if (!proj) {
+      proj = { id: crypto.randomUUID(), name: (name || "Proje").trim().slice(0, 60), workspacePath, createdAt: new Date().toISOString() };
+      setProjects((cur) => {
+        const next = [proj!, ...cur];
+        persistProjects(next);
+        return next;
+      });
+    }
+    setActiveProjectId(proj.id);
+    // Aktif kod oturumunu bu projeye bağla.
+    setCodeConvos((cur) => {
+      const next = cur.map((c) => (c.id === codeConvoId ? { ...c, projectId: proj!.id, workspacePath } : c));
+      saveConversations(CODE_CONVERSATIONS_KEY, next);
+      return next;
+    });
+    return proj;
+  }
+
   async function startRun(prompt: string) {
     // Aktif bir proje varsa aynı workspace'te devam et (sürekli geliştirme).
     const run = await api.post<Run>("/api/runs", {
@@ -1185,6 +1394,7 @@ function App() {
     });
     setActiveRun(run);
     setProjectWorkspace(run.workspacePath);
+    ensureProject(run.workspacePath, deriveTitle(messages));
     setEvents([]);
     setSuggestedPrompt(null);
     await refresh();
@@ -1234,8 +1444,10 @@ function App() {
     });
     setActiveRun(run);
     setProjectWorkspace(run.workspacePath);
+    ensureProject(run.workspacePath, deriveTitle(messages));
     setEvents([]);
     setSuggestedPrompt(null);
+    setCodeDebateDone(false);
     await refresh();
   }
 
@@ -1288,8 +1500,10 @@ function App() {
     });
     setActiveRun(run);
     setProjectWorkspace(run.workspacePath);
+    ensureProject(run.workspacePath, deriveTitle(messages));
     setEvents([]);
     setSuggestedPrompt(null);
+    setCodeDebateDone(false);
     setNotice(text.operatorBuildStarted);
     await refresh();
   }
@@ -1590,6 +1804,15 @@ function App() {
         ) : (
           <div className="codeLayout">
             <aside className="codeLeftCol">
+              <ProjectPanel
+                language={language}
+                projects={projects}
+                activeProjectId={activeProjectId}
+                onSwitch={switchProject}
+                onCreate={() => void createProject()}
+                onRename={(id) => void renameProject(id)}
+                onDelete={deleteProject}
+              />
               <AgentCenter
                 language={language}
                 status={cliStatus}
@@ -1626,7 +1849,7 @@ function App() {
                   onClear={() => { setMessages([welcomeMessageFor(language)]); setSuggestedPrompt(null); setAttachments([]); }}
                   onCreateBrief={() => void createBrief()}
                   onCreatePlan={() => void createPlan()}
-                  onContinueChat={() => setNotice(null)}
+                  onContinueChat={() => { setNotice(null); setCodeDebateDone(false); }}
                   onOperatorBuild={() => void operatorBuild()}
                   debateDone={codeDebateDone}
                   participantSources={participantSources}
@@ -1644,11 +1867,16 @@ function App() {
                   attachments={attachments}
                   onAddImage={(file) => void addImage(file)}
                   onRemoveImage={removeImage}
-                  conversations={conversations}
+                  conversations={activeProjectId ? codeConvos.filter((c) => c.projectId === activeProjectId) : codeConvos.filter((c) => !c.projectId)}
                   activeConversationId={conversationId}
                   onOpenConversation={openConversation}
                   onDeleteConversation={deleteConversation}
                   onNewChat={newChat}
+                  projects={projects}
+                  activeProjectId={activeProjectId}
+                  onSwitchProject={switchProject}
+                  onNewProject={newProject}
+                  onDeleteProject={deleteProject}
                   run={activeRun}
                   events={events}
                   onOpenFile={(path) => void openFileInDialog(path)}
@@ -1766,67 +1994,81 @@ function App() {
             <div className="planList">
               {planLoading && <p className="muted">{text.generating}</p>}
               {!planLoading && planTasks.map((task, index) => (
-                <div className="planTaskRow" key={index}>
-                  <input
-                    className="planTaskTitle"
-                    value={task.title}
-                    placeholder={text.taskTitle}
-                    onChange={(e) => setPlanTasks((cur) => cur.map((t, i) => (i === index ? { ...t, title: e.target.value } : t)))}
-                  />
-                  <select
-                    className="pill"
-                    value={task.cli ? `${task.cli}|${task.model ?? "default"}` : ""}
-                    title={text.assignAgent}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      setPlanTasks((cur) => cur.map((t, i) => {
-                        if (i !== index) return t;
-                        if (!v) return { ...t, cli: undefined, model: undefined };
-                        const [cli, model] = v.split("|");
-                        return { ...t, agentId: undefined, cli, model };
-                      }));
-                    }}
-                  >
-                    <option value="">{text.assignByRole}</option>
-                    {participantSources.flatMap((s) =>
-                      s.models.map((m) => (
-                        <option key={`${s.cli}|${m.id}`} value={`${s.cli}|${m.id}`} disabled={m.limited}>
-                          {s.label}{m.id !== "default" ? ` · ${m.label}` : ""}{m.limited ? ` (${text.limited})` : ""}
-                        </option>
-                      ))
-                    )}
-                  </select>
-                  <select
-                    className="pill"
-                    value={task.role ?? "builder"}
-                    title={text.role}
-                    onChange={(e) => setPlanTasks((cur) => cur.map((t, i) => (i === index ? { ...t, role: e.target.value as AgentRole } : t)))}
-                  >
-                    <option value="builder">{text.roleBuilder}</option>
-                    <option value="reviewer">{text.roleReviewer}</option>
-                    <option value="fixer">{text.roleFixer}</option>
-                    <option value="planner">{text.rolePlanner}</option>
-                  </select>
-                  <input
-                    className="planTaskFolder"
-                    value={task.folder ?? ""}
-                    placeholder={text.folder}
-                    onChange={(e) => setPlanTasks((cur) => cur.map((t, i) => (i === index ? { ...t, folder: e.target.value } : t)))}
-                  />
-                  <input
-                    className="planTaskDeps"
-                    value={(task.dependsOn ?? []).join(", ")}
-                    placeholder={text.dependsOn}
-                    onChange={(e) => setPlanTasks((cur) => cur.map((t, i) => (i === index ? { ...t, dependsOn: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) } : t)))}
-                  />
-                  <button className="iconButton" onClick={() => setPlanTasks((cur) => cur.filter((_, i) => i !== index))} title={text.remove}>
-                    <X size={14} />
-                  </button>
+                <div className="taskCard" key={index}>
+                  <div className="taskCardTop">
+                    <span className="taskCardNum">{index + 1}</span>
+                    <input
+                      className="taskCardTitle"
+                      value={task.title}
+                      placeholder={text.taskInstruction}
+                      onChange={(e) => setPlanTasks((cur) => cur.map((t, i) => (i === index ? { ...t, title: e.target.value } : t)))}
+                    />
+                    <button className="iconButton" onClick={() => setPlanTasks((cur) => cur.filter((_, i) => i !== index))} title={text.remove}>
+                      <X size={14} />
+                    </button>
+                  </div>
+                  <div className="taskCardGrid">
+                    <label className="taskField">
+                      <span>{text.assignAgent}</span>
+                      <select
+                        className="pill"
+                        value={task.cli ? `${task.cli}|${task.model ?? "default"}` : ""}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setPlanTasks((cur) => cur.map((t, i) => {
+                            if (i !== index) return t;
+                            if (!v) return { ...t, cli: undefined, model: undefined };
+                            const [cli, model] = v.split("|");
+                            return { ...t, agentId: undefined, cli, model };
+                          }));
+                        }}
+                      >
+                        <option value="">{text.assignByRole}</option>
+                        {participantSources.flatMap((s) =>
+                          s.models.map((m) => (
+                            <option key={`${s.cli}|${m.id}`} value={`${s.cli}|${m.id}`} disabled={m.limited}>
+                              {s.label}{m.id !== "default" ? ` · ${m.label}` : ""}{m.limited ? ` (${text.limited})` : ""}
+                            </option>
+                          ))
+                        )}
+                      </select>
+                    </label>
+                    <label className="taskField">
+                      <span>{text.role}</span>
+                      <select
+                        className="pill"
+                        value={task.role ?? "builder"}
+                        onChange={(e) => setPlanTasks((cur) => cur.map((t, i) => (i === index ? { ...t, role: e.target.value as AgentRole } : t)))}
+                      >
+                        <option value="builder">{text.roleBuilder}</option>
+                        <option value="reviewer">{text.roleReviewer}</option>
+                        <option value="fixer">{text.roleFixer}</option>
+                      </select>
+                    </label>
+                    <label className="taskField">
+                      <span>{text.folder}</span>
+                      <input
+                        className="pill"
+                        value={task.folder ?? ""}
+                        placeholder="—"
+                        onChange={(e) => setPlanTasks((cur) => cur.map((t, i) => (i === index ? { ...t, folder: e.target.value } : t)))}
+                      />
+                    </label>
+                    <label className="taskField">
+                      <span>{text.dependsOn}</span>
+                      <input
+                        className="pill"
+                        value={(task.dependsOn ?? []).join(", ")}
+                        placeholder="—"
+                        onChange={(e) => setPlanTasks((cur) => cur.map((t, i) => (i === index ? { ...t, dependsOn: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) } : t)))}
+                      />
+                    </label>
+                  </div>
                 </div>
               ))}
               {!planLoading && (
                 <button
-                  className="ghostButton"
+                  className="ghostButton addTaskBtn"
                   onClick={() => setPlanTasks((cur) => [...cur, { id: `task${cur.length + 1}`, title: "", role: "builder", folder: "", dependsOn: [] }])}
                 >
                   <Plus size={14} /> {text.addTask}
@@ -2633,6 +2875,57 @@ function ParticipantPicker({
   );
 }
 
+// Sol sütun: proje yönetimi (Ajan Merkezi'nin üstünde). Oluştur / geç / yeniden adlandır / sil.
+function ProjectPanel({
+  language,
+  projects,
+  activeProjectId,
+  onSwitch,
+  onCreate,
+  onRename,
+  onDelete
+}: {
+  language: Language;
+  projects: Project[];
+  activeProjectId: string | null;
+  onSwitch: (id: string) => void;
+  onCreate: () => void;
+  onRename: (id: string) => void;
+  onDelete: (id: string) => void;
+}) {
+  const text = uiText[language];
+  return (
+    <section className="glassPanel projectPanel">
+      <div className="panelTitle split">
+        <span>
+          <Folder size={16} />
+          {text.projects}
+        </span>
+        <button className="iconButton" onClick={onCreate} title={text.newProjectTitle}>
+          <Plus size={14} />
+        </button>
+      </div>
+      <div className="projectList">
+        {projects.length === 0 && <p className="projectEmpty">{text.noProjectsDesc}</p>}
+        {projects.map((p) => (
+          <div className={`projectRow${p.id === activeProjectId ? " active" : ""}`} key={p.id}>
+            <button className="projectNameBtn" onClick={() => onSwitch(p.id)} title={p.workspacePath}>
+              <span className="projectDot" />
+              <span className="projectNameText">{p.name}</span>
+            </button>
+            <button className="iconButton" onClick={() => onRename(p.id)} title={text.renameProject}>
+              <Pencil size={12} />
+            </button>
+            <button className="iconButton" onClick={() => { if (confirm(text.deleteProjectConfirm)) onDelete(p.id); }} title={text.deleteProject}>
+              <Trash2 size={12} />
+            </button>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 // Sağ sütun altındaki canlı görev durum çubuğu: aktif mi, hangi adımda, kaç dosya.
 function RunStatusBar({ run, events, language }: { run: Run | null; events: RunEvent[]; language: Language }) {
   const text = uiText[language];
@@ -3272,17 +3565,56 @@ function groupAgentEvents(events: RunEvent[]): Map<string, RunEvent[]> {
 function AgentActivitySection({
   events,
   language,
-  onOpenFile
+  onOpenFile,
+  running
 }: {
   events: RunEvent[];
   language: Language;
   onOpenFile?: (path: string) => void;
+  running?: boolean;
 }) {
+  const text = uiText[language];
   const fileEvents = events.filter((event) => event.type.startsWith("file_"));
   const groups = groupAgentEvents(events);
   if (!groups.size && !fileEvents.length) return null;
+
+  // Canlı akış: son 5 anlamlı olay (adım + dosya). Kullanıcıya "çalışıyor" hissi verir.
+  const feed = events
+    .filter((e) => e.type === "agent_step" || e.type === "file_created" || e.type === "file_changed" || e.type === "file_deleted")
+    .slice(-5)
+    .reverse();
+  const lastFile = [...events].reverse().find((e) => e.type.startsWith("file_"));
+  const currentFile = lastFile ? parseFileChange(lastFile).path : null;
+
   return (
     <div className="agentActivitySection">
+      {running && (
+        <div className="liveProgress">
+          <span className="liveSpinner" />
+          <span className="liveLabel">{text.working}</span>
+          {currentFile && <span className="liveFile">{currentFile}</span>}
+        </div>
+      )}
+      {feed.length > 0 && (
+        <div className="liveFeed">
+          {feed.map((e) => {
+            const isFile = e.type.startsWith("file_");
+            const label = isFile ? parseFileChange(e).path : e.message.replace(/\s+/g, " ");
+            return (
+              <button
+                key={e.id}
+                className={`liveFeedLine ${e.type}`}
+                onClick={() => (isFile && onOpenFile ? onOpenFile(parseFileChange(e).path) : undefined)}
+                title={label}
+              >
+                {isFile ? <FileIcon size={12} /> : <Cpu size={12} />}
+                <span className="liveFeedText">{label.slice(0, 80)}</span>
+                <time>{formatRunEventTime(e.createdAt)}</time>
+              </button>
+            );
+          })}
+        </div>
+      )}
       {[...groups.entries()].map(([agentId, evts]) => (
         <AgentActivityCard key={agentId} agentId={agentId} events={evts} />
       ))}
@@ -3626,14 +3958,31 @@ function FileExplorer({
           <Folder size={15} />
           {text.explorer}
         </span>
-        <button
-          className="iconButton"
-          disabled={!rootPath}
-          onClick={() => { setLoading(true); loadDir().then((e) => { setRootEntries(e); setLoading(false); }); }}
-          title={text.refresh}
-        >
-          <RefreshCw size={14} />
-        </button>
+        <span className="explorerHeadActions">
+          <button
+            className="iconButton"
+            disabled={!rootPath}
+            onClick={() => {
+              if (!rootPath) return;
+              void fetch("/api/open-folder", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ path: rootPath })
+              });
+            }}
+            title={text.openInExplorer}
+          >
+            <ExternalLink size={14} />
+          </button>
+          <button
+            className="iconButton"
+            disabled={!rootPath}
+            onClick={() => { setLoading(true); loadDir().then((e) => { setRootEntries(e); setLoading(false); }); }}
+            title={text.refresh}
+          >
+            <RefreshCw size={14} />
+          </button>
+        </span>
       </div>
       <div className="explorerBody">
         {!rootPath ? (
@@ -3839,6 +4188,7 @@ function CodeChatPanel({
   runActive, onAddNote, onStopRun,
   attachments, onAddImage, onRemoveImage,
   conversations, activeConversationId, onOpenConversation, onDeleteConversation, onNewChat,
+  projects, activeProjectId, onSwitchProject, onNewProject, onDeleteProject,
   run, events, onOpenFile, onTogglePreview, previewOpen
 }: {
   language: Language;
@@ -3887,6 +4237,11 @@ function CodeChatPanel({
   onOpenConversation: (id: string) => void;
   onDeleteConversation: (id: string) => void;
   onNewChat: () => void;
+  projects: Project[];
+  activeProjectId: string | null;
+  onSwitchProject: (id: string) => void;
+  onNewProject: () => void;
+  onDeleteProject: (id: string) => void;
   run: Run | null;
   events: RunEvent[];
   onOpenFile?: (path: string) => void;
@@ -3946,13 +4301,14 @@ function CodeChatPanel({
   return (
     <section className="codeChatPanel glassPanel">
       <div className="codeChatHeader">
-        <div className="panelTitle">
-          <MessageCircle size={15} />
-          <span>{text.codeChat}</span>
-          <strong>{plannerLabels[selectedPlanner]}</strong>
+        <div className="panelTitle projectTitle">
+          <Folder size={15} />
+          <span className="activeProjectLabel" title={text.activeProject}>
+            {projects.find((p) => p.id === activeProjectId)?.name ?? text.noProjectYet}
+          </span>
         </div>
         <div className="codeChatTools">
-          <button className="ghostButton" onClick={onNewChat} title={text.newChat}>
+          <button className="ghostButton" onClick={onNewChat} title={text.newSessionTitle}>
             <Plus size={13} />
             {text.new}
           </button>
@@ -4033,7 +4389,7 @@ function CodeChatPanel({
             onTeamWork={onCreatePlan}
           />
         )}
-        {run && <AgentActivitySection events={events} language={language} onOpenFile={onOpenFile} />}
+        {run && <AgentActivitySection events={events} language={language} onOpenFile={onOpenFile} running={runActive} />}
         {thinking && (
           <article className="chatBubble assistant thinking compact">
             <div className="typingDots"><span /><span /><span /></div>
@@ -4242,8 +4598,9 @@ function BrowserPreview({ run, language, onClose }: { run: Run | null; language:
   const [refreshKey, setRefreshKey] = useState(0);
   const [entry, setEntry] = useState<string | null>(null);
   const [previewAvailable, setPreviewAvailable] = useState(false);
-  const serverOrigin = `${window.location.protocol}//${window.location.hostname}:8787`;
-  const previewUrl = run && entry ? `${serverOrigin}/preview/${run.id}/${entry}` : null;
+  // Göreli URL: dev'de Vite proxy (/preview, /preview-entry → 8787), prod'da aynı origin.
+  // Mutlak cross-origin URL CORS'a takılıp önizlemeyi boş bırakıyordu.
+  const previewUrl = run && entry ? `/preview/${run.id}/${entry}` : null;
 
   useEffect(() => {
     let cancelled = false;
@@ -4252,7 +4609,7 @@ function BrowserPreview({ run, language, onClose }: { run: Run | null; language:
       setPreviewAvailable(false);
       return;
     }
-    fetch(`${serverOrigin}/preview-entry/${run.id}`, { cache: "no-store" })
+    fetch(`/preview-entry/${run.id}`, { cache: "no-store" })
       .then((response) => (response.ok ? response.json() : null))
       .then((data: { entry?: string } | null) => {
         if (cancelled) return;
@@ -4273,7 +4630,7 @@ function BrowserPreview({ run, language, onClose }: { run: Run | null; language:
     return () => {
       cancelled = true;
     };
-  }, [run?.id, serverOrigin, refreshKey]);
+  }, [run?.id, refreshKey]);
 
   return (
     <section className="glassPanel browserPreview">

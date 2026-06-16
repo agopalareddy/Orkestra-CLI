@@ -12,7 +12,11 @@
 
 Instead of paying for third-party API proxies or direct token costs, Orkestra runs as a secure local daemon. It drives your existing CLI sessions directly on your loopback address (`127.0.0.1`), pipes their stdout/stderr stream in real-time, extracts files, tracks live usage limits, and coordinates them as a collaborative software engineering department.
 
+### 🎥 Live Demo Walkthrough
+![Orkestra Live Demo Walkthrough](docs/images/orkestra_demo.webp)
+
 ---
+
 
 ## 📑 Table of Contents
 - [📸 Screenshots](#-screenshots)

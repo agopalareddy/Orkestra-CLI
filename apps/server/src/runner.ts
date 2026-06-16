@@ -38,7 +38,11 @@ export class Runner {
 
   private async executeTeam(run: Run, tasks: PlanTask[]) {
     this.store.updateRun(run.id, { status: "running", activeStep: "team: planning" });
-    this.emit(run.id, "started", `Ekip çalışması başladı (${tasks.length} görev).`);
+    // Tek görev = operatör/tek ajan çalışması; çoğul = ekip çalışması.
+    const startMsg = tasks.length === 1
+      ? "Operatör projeyi yapıyor."
+      : `Ekip çalışması başladı (${tasks.length} görev).`;
+    this.emit(run.id, "started", startMsg);
     try {
       mkdirSync(run.workspacePath, { recursive: true });
       writeFileSync(join(run.workspacePath, "PROMPT.md"), run.prompt, "utf8");
@@ -73,8 +77,9 @@ export class Runner {
       const transcript = tasks.map((t) => `## ${t.title} (${t.id})\n${done.get(t.id) ?? "(çalışmadı)"}`).join("\n\n");
       writeFileSync(join(run.workspacePath, "TRANSCRIPT.md"), transcript, "utf8");
       this.emit(run.id, "file_created", "TRANSCRIPT.md", null, JSON.stringify({ path: "TRANSCRIPT.md", adds: 0, dels: 0 }));
-      this.store.updateRun(run.id, { status: "completed", activeStep: "completed", completedAt: new Date().toISOString(), summary: "Ekip çalışması tamamlandı." });
-      this.emit(run.id, "completed", "Ekip çalışması tamamlandı.");
+      const doneMsg = tasks.length === 1 ? "Operatör projeyi tamamladı." : "Ekip çalışması tamamlandı.";
+      this.store.updateRun(run.id, { status: "completed", activeStep: "completed", completedAt: new Date().toISOString(), summary: doneMsg });
+      this.emit(run.id, "completed", doneMsg);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.store.updateRun(run.id, { status: "failed", activeStep: "failed", completedAt: new Date().toISOString(), summary: message });
@@ -430,19 +435,21 @@ function adHocAgent(cli: string, model: string | undefined, role: string): Agent
   const m = model && model !== "default" ? model : undefined;
   let command = "";
   let argsTemplate: string[] = [];
+  // cli id'leri: "claude" | "codex" | "antigravity" (PlannerId/DebateParticipant).
+  // antigravity'nin komutu "agy".
   if (cli === "claude") {
     command = "claude";
     argsTemplate = m ? ["--model", m, "-p", "--permission-mode", "acceptEdits"] : ["-p", "--permission-mode", "acceptEdits"];
   } else if (cli === "codex") {
     command = "codex";
     argsTemplate = m ? ["exec", "-m", m, "--dangerously-bypass-approvals-and-sandbox"] : ["exec", "--dangerously-bypass-approvals-and-sandbox"];
-  } else if (cli === "agy") {
+  } else if (cli === "antigravity" || cli === "agy" || cli === "gemini") {
     command = "agy";
     argsTemplate = m ? ["--model", m, "-p", "--dangerously-skip-permissions"] : ["-p", "--dangerously-skip-permissions"];
   } else {
     return undefined;
   }
-  const labels: Record<string, string> = { claude: "Claude", codex: "Codex", agy: "Antigravity" };
+  const labels: Record<string, string> = { claude: "Claude", codex: "Codex", antigravity: "Antigravity", agy: "Antigravity", gemini: "Gemini" };
   return {
     id: `adhoc-${cli}-${m ?? "default"}`,
     name: `${labels[cli] ?? cli}${m ? ` · ${m}` : ""}`,
