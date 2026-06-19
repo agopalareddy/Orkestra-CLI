@@ -10,6 +10,7 @@ import { Store, defaultLimitPatterns } from "./db";
 import { EventHub } from "./events";
 import { Runner } from "./runner";
 import { GitService } from "./git";
+import { PreviewManager, detectProjectType } from "./preview";
 import {
   analyzeDebate,
   detectPipelineIntent,
@@ -31,6 +32,7 @@ const store = new Store(config);
 const hub = new EventHub();
 const runner = new Runner(store, hub);
 const git = new GitService(process.cwd());
+const previews = new PreviewManager();
 
 const app = Fastify({ logger: true, bodyLimit: 25 * 1024 * 1024 });
 const uploadsDir = join(config.dataDir, "uploads");
@@ -527,6 +529,14 @@ app.post<{ Body: CreateRunRequest }>("/api/runs", async (request, reply) => {
     createdAt: new Date().toISOString()
   });
   hub.publish(event);
+  // Diff paneli için baz: workspace'i git deposu yapıp run ÖNCESİ durumu commit'le.
+  // Böylece sonradan working-tree diff yalnızca bu run'ın değişikliklerini gösterir.
+  try {
+    mkdirSync(workspacePath, { recursive: true });
+    await new GitService(workspacePath).commitBaseline();
+  } catch (err) {
+    app.log.warn(`git baseline failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
   // Görev planı verilmişse ekip modu; yoksa doğrusal pipeline.
   if (request.body.tasks?.length) {
     runner.startTeam(run, request.body.tasks);
@@ -581,6 +591,17 @@ app.post<{ Body: { path?: string; newName?: string } }>("/api/projects/rename", 
     return reply.code(403).send({ error: "Forbidden" });
   }
   if (!existsSync(resolved)) return reply.code(404).send({ error: "Folder not found" });
+  // Aktif (çalışan/kuyruktaki) bir run'ın cwd'si olan klasör Windows'ta kilitlidir →
+  // fiziksel renameSync EPERM verir. Bu durumda klasörü taşımadan YALNIZCA görünen adı
+  // güncelle (klasör adı aynı kalır; kullanıcı çalışma sürerken de yeniden adlandırabilir).
+  const activeInFolder = store.listRuns().some((r) => {
+    if (r.status !== "running" && r.status !== "queued") return false;
+    const ws = resolve(r.workspacePath);
+    return ws === resolved || ws.startsWith(`${resolved}\\`) || ws.startsWith(`${resolved}/`);
+  });
+  if (activeInFolder) {
+    return { workspacePath: resolved, name: newName };
+  }
   const base = slug(newName) || `proje-${randomUUID().slice(0, 6)}`;
   let target = join(config.workspaceDir, base);
   let i = 2;
@@ -618,6 +639,34 @@ app.post<{ Body: { path?: string } }>("/api/open-folder", async (request, reply)
   }
 });
 
+// Dosyayı (veya klasörü) VS Code'da açar. `code` CLI PATH'te olmalı.
+app.post<{ Body: { path?: string } }>("/api/open-in-vscode", async (request, reply) => {
+  const requested = request.body.path?.trim();
+  if (!requested) return reply.code(400).send({ error: "Path is required" });
+  const workspaceRoot = resolve(config.workspaceDir);
+  const resolved = resolve(requested);
+  // Güvenlik: yalnızca workspace altındaki yollar açılabilir.
+  if (resolved !== workspaceRoot && !resolved.startsWith(`${workspaceRoot}/`) && !resolved.startsWith(`${workspaceRoot}\\`)) {
+    return reply.code(403).send({ error: "Forbidden" });
+  }
+  if (!existsSync(resolved)) return reply.code(404).send({ error: "Path not found" });
+  try {
+    // Windows'ta `code` aslında `code.cmd` → shell:true ile bulunur.
+    const child = spawn("code", ["--reuse-window", resolved], {
+      detached: true,
+      stdio: "ignore",
+      shell: process.platform === "win32"
+    });
+    child.on("error", (err) => {
+      app.log.warn(`open-in-vscode failed: ${err.message}`);
+    });
+    child.unref();
+    return { ok: true };
+  } catch (error) {
+    return reply.code(500).send({ error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
 app.get<{ Params: { id: string } }>("/api/runs/:id/events", async (request, reply) => {
   reply.hijack();
   reply.raw.writeHead(200, {
@@ -633,6 +682,15 @@ app.get<{ Params: { id: string } }>("/api/runs/:id/events", async (request, repl
 });
 
 app.get("/api/git/status", async () => git.status());
+
+// Bir run workspace'inin çalışma-ağacı diff'i (dosya başına unified diff + adds/dels).
+app.get<{ Params: { runId: string } }>("/api/git/diff/:runId", async (request, reply) => {
+  const run = store.getRun(request.params.runId);
+  if (!run) return reply.code(404).send({ error: "Run not found" });
+  if (!existsSync(run.workspacePath)) return reply.code(404).send({ error: "Workspace not found" });
+  const files = await new GitService(run.workspacePath).workingDiff();
+  return { files };
+});
 
 app.post<{ Body: { branch: string } }>("/api/git/branch", async (request) => {
   await git.createBranch(request.body.branch);
@@ -845,6 +903,41 @@ app.get<{ Params: { runId: string } }>("/preview-entry/:runId", async (request, 
   return reply.send({ entry });
 });
 
+// Proje tipini + (statikse) giriş HTML'ini döndürür. Önizleme butonu bununla görünür.
+app.get<{ Params: { runId: string } }>("/api/preview/info/:runId", async (request, reply) => {
+  const run = store.getRun(request.params.runId);
+  if (!run) return reply.code(404).send({ error: "Run not found" });
+  if (!existsSync(run.workspacePath)) return reply.send({ type: "none" });
+  const entry = findEntryHtml(run.workspacePath);
+  const type = detectProjectType(run.workspacePath, Boolean(entry));
+  return reply.send({ type, entry: type === "static" ? entry : undefined });
+});
+
+// Önizlemeyi başlatır: vite ise dev sunucusunu ayağa kaldırır, statikse iframe yolunu döndürür.
+app.post<{ Params: { runId: string } }>("/api/preview/start/:runId", async (request, reply) => {
+  const run = store.getRun(request.params.runId);
+  if (!run) return reply.code(404).send({ error: "Run not found" });
+  if (!existsSync(run.workspacePath)) return reply.code(404).send({ error: "Workspace not found" });
+  const entry = findEntryHtml(run.workspacePath);
+  const type = detectProjectType(run.workspacePath, Boolean(entry));
+  if (type === "vite") return reply.send(previews.start(run.id, run.workspacePath));
+  if (type === "static") return reply.send({ type: "static", entry });
+  return reply.code(404).send({ error: "No preview available" });
+});
+
+// Vite dev sunucusunun durumunu sorgular (installing → starting → ready).
+app.get<{ Params: { runId: string } }>("/api/preview/status/:runId", async (request, reply) => {
+  const state = previews.get(request.params.runId);
+  if (!state) return reply.code(404).send({ error: "Not started" });
+  return reply.send(state);
+});
+
+// Vite dev sunucusunu durdurur.
+app.post<{ Params: { runId: string } }>("/api/preview/stop/:runId", async (request) => {
+  previews.stop(request.params.runId);
+  return { ok: true };
+});
+
 app.get<{ Params: { runId: string; "*": string } }>("/preview/:runId/*", async (request, reply) => {
   const run = store.getRun(request.params.runId);
   if (!run) return reply.code(404).send({ error: "Run not found" });
@@ -856,6 +949,11 @@ app.get<{ Params: { runId: string; "*": string } }>("/preview/:runId/*", async (
   const content = readFileSync(filePath);
   return reply.type(mime).send(content);
 });
+
+// Sunucu kapanırken vite dev süreçlerini de kapat.
+for (const sig of ["SIGINT", "SIGTERM", "exit"] as const) {
+  process.on(sig, () => previews.stopAll());
+}
 
 await app.listen({ host: config.host, port: config.port });
 

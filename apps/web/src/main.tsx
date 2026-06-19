@@ -4,6 +4,8 @@ import {
   AlertTriangle,
   ArrowUp,
   Bot,
+  Code2,
+  GitCompare,
   FileText,
   CheckCircle2,
   ChevronRight,
@@ -380,6 +382,13 @@ const uiText = {
     deleteProject: "Delete project",
     deleteProjectConfirm: "Delete this project from the list? (files are not deleted)",
     openInExplorer: "Open folder in file manager",
+    openInVscode: "Open in VS Code",
+    changes: "Changes",
+    noChanges: "No changes yet.",
+    binaryFile: "Binary file — not shown.",
+    previewInstalling: "Installing dependencies… (first run may take a while)",
+    previewStarting: "Starting the dev server…",
+    previewError: "Couldn't start the preview. Check the terminal/logs.",
     preview: "Preview",
     openInBrowser: "Open in browser",
     refreshPreview: "Refresh",
@@ -703,6 +712,13 @@ const uiText = {
     deleteProject: "Projeyi sil",
     deleteProjectConfirm: "Bu proje listeden silinsin mi? (dosyalar silinmez)",
     openInExplorer: "Klasörü dosya yöneticisinde aç",
+    openInVscode: "VS Code'da aç",
+    changes: "Değişiklikler",
+    noChanges: "Henüz değişiklik yok.",
+    binaryFile: "İkili dosya — gösterilmiyor.",
+    previewInstalling: "Bağımlılıklar kuruluyor… (ilk seferde biraz sürebilir)",
+    previewStarting: "Dev sunucusu başlatılıyor…",
+    previewError: "Önizleme başlatılamadı. Terminal/loglara bakın.",
     preview: "Önizleme",
     openInBrowser: "Tarayıcıda aç",
     refreshPreview: "Yenile",
@@ -811,14 +827,36 @@ function welcomeMessageFor(language: Language): ChatMessage {
 }
 
 
+// Backend (8787) tsx-watch ile yeniden başlarken ~1-2sn kapalı kalır; bu pencerede istekler
+// 503 (vite proxy "backend restarting") veya ağ hatası verir. Geçici durum → kısa retry ile
+// dayanıklı yap (aksi halde "yeni proje eklenemiyor" gibi sessiz başarısızlıklar oluşur).
+async function fetchWithRetry(url: string, init?: RequestInit, retries = 3): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const response = await fetch(url, init);
+      if (response.status === 503 && attempt < retries) {
+        await new Promise((r) => setTimeout(r, 600));
+        continue;
+      }
+      return response;
+    } catch (err) {
+      if (attempt < retries) {
+        await new Promise((r) => setTimeout(r, 600));
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
 const api = {
   async get<T>(url: string): Promise<T> {
-    const response = await fetch(url);
+    const response = await fetchWithRetry(url);
     if (!response.ok) throw new Error(await response.text());
     return response.json() as Promise<T>;
   },
   async post<T>(url: string, body: unknown = {}): Promise<T> {
-    const response = await fetch(url, {
+    const response = await fetchWithRetry(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body)
@@ -828,9 +866,11 @@ const api = {
   }
 };
 
-type StoredConversation = { id: string; title: string; messages: ChatMessage[]; updatedAt: string; workspacePath?: string | null; projectId?: string | null; codingActive?: boolean; phasePendingRunId?: string | null };
+type StoredConversation = { id: string; title: string; messages: ChatMessage[]; updatedAt: string; workspacePath?: string | null; projectId?: string | null; codingActive?: boolean; phasePendingRunId?: string | null; lastRunId?: string | null };
 // Proje: kalıcı bir kod tabanı/klasör. Her projenin kendi oturum (konuşma) geçmişi olur.
 type Project = { id: string; name: string; workspacePath: string; createdAt: string };
+// Sunucudaki GitService.DiffFile ile aynı şekil (working-tree diff).
+type DiffFile = { path: string; adds: number; dels: number; diff: string; binary: boolean };
 type TextPromptState = {
   title: string;
   placeholder?: string;
@@ -981,6 +1021,10 @@ function App() {
   const [cliStatus, setCliStatus] = useState<CliStatusResponse | null>(null);
   const [gitStatus, setGitStatus] = useState<GitStatus | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // Hata/bilgi mesajları artık baloncuk yerine gerçek browser console'una gider.
+  useEffect(() => {
+    if (notice) console.error("[Orkestra]", notice);
+  }, [notice]);
   // İlk açılış kurulum sihirbazı tamamlandı mı?
   const [setupDone, setSetupDone] = useState<boolean>(() => localStorage.getItem("orkestra.setupDone") === "1");
   // Ayarlar dialog'u açık mı?
@@ -1019,6 +1063,12 @@ function App() {
   const [openFileTabs, setOpenFileTabs] = useState<OpenFileTab[]>([]);
   const [activeFilePath, setActiveFilePath] = useState<string | null>(null);
   const [terminalOpen, setTerminalOpen] = useState(false);
+  // Diff paneli (sağ alan; terminal ile karşılıklı dışlayan).
+  const [diffOpen, setDiffOpen] = useState(false);
+  const [diffFiles, setDiffFiles] = useState<DiffFile[]>([]);
+  const [diffLoading, setDiffLoading] = useState(false);
+  // "İncele" diff'i hangi run için açacak: aktif run ya da geri yüklenen konuşmanın son run'ı.
+  const [reviewRunId, setReviewRunId] = useState<string | null>(null);
   // Terminal kolon genişliği (yatay sürükleyerek değiştirilebilir).
   const [terminalWidth, setTerminalWidth] = useState<number>(() => {
     const saved = Number(localStorage.getItem("orkestra.terminalWidth"));
@@ -1052,28 +1102,33 @@ function App() {
     [events]
   );
 
-  // Önizleme butonu yalnızca çalıştırılabilir bir giriş HTML'i (index.html vb.) bulununca görünür.
+  // Önizleme butonu: statik HTML VEYA React/Vite projesi algılanınca görünür.
+  // (Tamamlanınca da yeniden sorgulanır → buton son anda oluşan girişi kaçırmaz.)
   const [previewAvailable, setPreviewAvailable] = useState(false);
+  const [previewInfo, setPreviewInfo] = useState<{ type: "vite" | "static" | "none"; entry?: string }>({ type: "none" });
+  const previewRunId = activeRun?.id ?? reviewRunId;
   useEffect(() => {
-    if (!activeRun) {
+    if (!previewRunId) {
       setPreviewAvailable(false);
+      setPreviewInfo({ type: "none" });
       return;
     }
     let cancelled = false;
-    const host = window.location.hostname === "localhost" ? "127.0.0.1" : window.location.hostname;
-    const origin = `${window.location.protocol}//${host}:8787`;
-    fetch(`${origin}/preview-entry/${activeRun.id}`, { cache: "no-store" })
+    fetch(`/api/preview/info/${previewRunId}`, { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
-      .then((data: { entry?: string } | null) => {
-        if (!cancelled) setPreviewAvailable(Boolean(data?.entry));
+      .then((data: { type?: "vite" | "static" | "none"; entry?: string } | null) => {
+        if (cancelled) return;
+        const type = data?.type ?? "none";
+        setPreviewInfo({ type, entry: data?.entry });
+        setPreviewAvailable(type !== "none");
       })
       .catch(() => {
-        if (!cancelled) setPreviewAvailable(false);
+        if (!cancelled) { setPreviewAvailable(false); setPreviewInfo({ type: "none" }); }
       });
     return () => {
       cancelled = true;
     };
-  }, [activeRun?.id, workspaceFileEventCount]);
+  }, [previewRunId, workspaceFileEventCount, activeRun?.status]);
 
   // Önizlenecek dosya yoksa açık önizlemeyi kapat.
   useEffect(() => {
@@ -1190,7 +1245,8 @@ function App() {
     workspacePath?: string | null,
     projectId?: string | null,
     coding?: boolean,
-    phaseRunId?: string | null
+    phaseRunId?: string | null,
+    lastRunId?: string | null
   ) {
     if (!msgs.some((message) => message.role === "user")) return;
     setConvos((current) => {
@@ -1204,7 +1260,9 @@ function App() {
         workspacePath: workspacePath ?? prev?.workspacePath ?? null,
         projectId: projectId ?? prev?.projectId ?? null,
         codingActive: coding ?? prev?.codingActive ?? false,
-        phasePendingRunId: phaseRunId !== undefined ? phaseRunId : prev?.phasePendingRunId ?? null
+        phasePendingRunId: phaseRunId !== undefined ? phaseRunId : prev?.phasePendingRunId ?? null,
+        // Son run id'si: oturuma dönünce ajan logları + İncele kartı bu run'dan geri yüklenir.
+        lastRunId: lastRunId ?? prev?.lastRunId ?? null
       };
       const next = [convo, ...current.filter((item) => item.id !== id)];
       saveConversations(key, next);
@@ -1217,8 +1275,8 @@ function App() {
   }, [chatMessages, chatConvoId]);
 
   useEffect(() => {
-    persistConvo(CODE_CONVERSATIONS_KEY, codeMessages, codeConvoId, setCodeConvos, projectWorkspace, activeProjectId, codingActive, phasePending);
-  }, [codeMessages, codeConvoId, projectWorkspace, activeProjectId, codingActive, phasePending]);
+    persistConvo(CODE_CONVERSATIONS_KEY, codeMessages, codeConvoId, setCodeConvos, projectWorkspace, activeProjectId, codingActive, phasePending, activeRun?.id ?? undefined);
+  }, [codeMessages, codeConvoId, projectWorkspace, activeProjectId, codingActive, phasePending, activeRun?.id]);
 
   // "Yeni" = aktif PROJE içinde yeni oturum (workspace korunur, dosya gezgini aynı projede kalır).
   function newChat() {
@@ -1263,6 +1321,9 @@ function App() {
     setProjectWorkspace(proj.workspacePath);
     setActiveRun(null);
     setEvents([]);
+    setStreamItems([]);
+    setDiffOpen(false);
+    setPhasePending(null);
     setCodeDebateDone(false);
     setLastAnalysis(null);
     // Projenin en güncel oturumunu aç; yoksa yeni boş oturum.
@@ -1272,11 +1333,14 @@ function App() {
       setCodeMessages(latest.messages.length ? latest.messages : [welcomeMessageFor(language)]);
       setCodeConvoId(latest.id);
       setCodingActive(Boolean(latest.codingActive));
-      void restorePendingPhase(latest.phasePendingRunId); // bekleyen faz varsa "devam et" geri gelsin
+      setReviewRunId(latest.lastRunId ?? null);
+      // Son run'a yeniden bağlan (çalışıyorsa canlı sürer, bekliyorsa "devam et" gelir).
+      if (latest.lastRunId) void reconnectRun(latest.lastRunId);
     } else {
       setCodeMessages([welcomeMessageFor(language)]);
       setCodeConvoId(crypto.randomUUID());
       setCodingActive(false);
+      setReviewRunId(null);
       setPhasePending(null);
     }
   }
@@ -1362,6 +1426,33 @@ function App() {
     }
   }
 
+  // Aktif run değiştikçe "İncele" hedef run'ını güncel tut.
+  useEffect(() => {
+    if (activeRun?.id) setReviewRunId(activeRun.id);
+  }, [activeRun?.id]);
+
+  // Diff'i sunucudan çek (working-tree, dosya başına unified diff).
+  const loadDiff = useCallback(async (runId: string | null) => {
+    if (!runId) { setDiffFiles([]); return; }
+    setDiffLoading(true);
+    try {
+      const res = await api.get<{ files: DiffFile[] }>(`/api/git/diff/${runId}`);
+      setDiffFiles(res.files ?? []);
+    } catch {
+      setDiffFiles([]);
+    } finally {
+      setDiffLoading(false);
+    }
+  }, []);
+
+  // "İncele" → sağdaki diff panelini aç (terminal açıksa kapanır).
+  function openDiff() {
+    const runId = reviewRunId ?? activeRun?.id ?? null;
+    setTerminalOpen(false);
+    setDiffOpen(true);
+    void loadDiff(runId);
+  }
+
   function openConversation(id: string) {
     const convo = conversations.find((item) => item.id === id);
     if (!convo) return;
@@ -1376,8 +1467,36 @@ function App() {
       setActiveProjectId(convo.projectId ?? null);
       setCodingActive(Boolean(convo.codingActive));
       setActiveRun(null);
+      setStreamItems([]);
       setEvents([]);
-      void restorePendingPhase(convo.phasePendingRunId); // bekleyen faz varsa "devam et" geri gelsin
+      setDiffOpen(false);
+      setPhasePending(null);
+      setReviewRunId(convo.lastRunId ?? null);
+      // Son run'a yeniden bağlan: hâlâ çalışıyor/bekliyorsa CANLI sürer (SSE), bitmişse statik yüklenir.
+      if (convo.lastRunId) {
+        void reconnectRun(convo.lastRunId);
+      }
+    }
+  }
+
+  // Bir run'a yeniden bağlanır: çalışıyor/bekliyorsa setActiveRun ile SSE'yi yeniden kurar
+  // (kodlama kaldığı yerden canlı sürer); bitmişse yalnızca event'leri statik yükler.
+  // Bekleyen faz varsa "devam et" (phasePending) geri gelir.
+  async function reconnectRun(runId: string) {
+    try {
+      const detail = await api.get<Run & { events: RunEvent[] }>(`/api/runs/${runId}`);
+      const active = detail.status === "running" || detail.status === "queued";
+      const awaiting =
+        (detail.status === "running" && /awaiting/i.test(detail.activeStep ?? "")) ||
+        (detail.status === "failed" && /Duraklat|⏸/i.test(detail.summary ?? ""));
+      if (active || awaiting) {
+        setActiveRun(detail); // SSE event'leri replay edip canlı akışı sürdürür
+      } else {
+        setEvents(detail.events ?? []); // bitmiş run: statik loglar + İncele kartı
+      }
+      if (awaiting) setPhasePending(detail.id);
+    } catch {
+      // run bulunamadıysa sessiz geç
     }
   }
 
@@ -1435,6 +1554,7 @@ function App() {
       if (!event.ctrlKey) return;
       if (event.key === "`" || event.key === "\"" || event.key === "'") {
         event.preventDefault();
+        setDiffOpen(false);
         setTerminalOpen((value) => !value);
         setActiveView("code");
       }
@@ -1471,10 +1591,12 @@ function App() {
       }
       // Faz bitti → raporu chat'e ekle + "devam et" butonunu göster (run hâlâ çalışıyor, onay bekliyor).
       if (event.type === "phase_done") {
-        setMessages((current) => [
-          ...current,
-          { id: crypto.randomUUID(), role: "assistant", planner: "system", modelLabel: "Orkestra", content: event.message, createdAt: new Date().toISOString() }
-        ]);
+        // İçerik tekilleştirmesi: SSE replay'inde (oturuma dönünce) aynı faz raporu iki kez eklenmesin.
+        setMessages((current) =>
+          current.some((m) => m.content === event.message)
+            ? current
+            : [...current, { id: crypto.randomUUID(), role: "assistant", planner: "system", modelLabel: "Orkestra", content: event.message, createdAt: new Date().toISOString() }]
+        );
         setPhasePending(event.runId);
       }
       // ÖNEMLİ: ajan-bazlı completed/failed (agentId dolu) RUN'ı bitirmez — sadece o ajan bitti.
@@ -2049,25 +2171,6 @@ function App() {
     }
   }
 
-  // Oturuma dönünce: kayıtlı bekleyen faz run'ını geri yükle (faz onayı butonu + activeRun gelsin).
-  async function restorePendingPhase(runId?: string | null) {
-    if (!runId) { setPhasePending(null); return; }
-    try {
-      const run = await api.get<Run>(`/api/runs/${runId}`);
-      const awaiting =
-        (run.status === "running" && /awaiting/i.test(run.activeStep ?? "")) ||
-        (run.status === "failed" && /Duraklat|⏸/i.test(run.summary ?? ""));
-      if (awaiting) {
-        setActiveRun(run);
-        setPhasePending(runId);
-      } else {
-        setPhasePending(null);
-      }
-    } catch {
-      setPhasePending(null);
-    }
-  }
-
   // Faz onayı: "devam et" → bir sonraki faza geç.
   async function resumePhase() {
     if (!phasePending) return;
@@ -2425,7 +2528,7 @@ function App() {
           </>
         ) : (
           <div
-            className={`codeLayout${terminalOpen ? " termOpen" : ""}${sidebarCollapsed ? " sidebarCollapsed" : ""}${terminalResizing ? " resizing" : ""}`}
+            className={`codeLayout${(terminalOpen || diffOpen) ? " termOpen" : ""}${sidebarCollapsed ? " sidebarCollapsed" : ""}${terminalResizing ? " resizing" : ""}`}
             style={{ ["--term-w" as string]: `${terminalWidth}px` }}
           >
             <aside className={`codeLeftCol${sidebarCollapsed ? " collapsed" : ""}`}>
@@ -2537,6 +2640,7 @@ function App() {
                   run={activeRun}
                   events={events}
                   onOpenFile={(path) => void openFileInDialog(path)}
+                  onReview={openDiff}
                   onTogglePreview={() => setShowPreview((current) => !current)}
                   previewOpen={showPreview}
                   previewAvailable={previewAvailable}
@@ -2544,22 +2648,37 @@ function App() {
               </div>
             </div>
 
-            <IntegratedTerminal
-              language={language}
-              open={terminalOpen}
-              width={terminalWidth}
-              onWidthChange={setTerminalWidth}
-              onResizeStart={() => setTerminalResizing(true)}
-              onResizeEnd={() => setTerminalResizing(false)}
-              sessions={terminalSessions}
-              activeId={activeTerminalId}
-              outputs={terminalOutputs}
-              onToggle={() => setTerminalOpen((value) => !value)}
-              onCreate={(shell) => void createTerminal(shell)}
-              onClose={(id) => void closeTerminal(id)}
-              onSelect={setActiveTerminalId}
-              onInput={(id, value) => void sendTerminalInput(id, value)}
-            />
+            {diffOpen ? (
+              <DiffPanel
+                language={language}
+                files={diffFiles}
+                loading={diffLoading}
+                width={terminalWidth}
+                onWidthChange={setTerminalWidth}
+                onResizeStart={() => setTerminalResizing(true)}
+                onResizeEnd={() => setTerminalResizing(false)}
+                onRefresh={() => void loadDiff(reviewRunId ?? activeRun?.id ?? null)}
+                onOpenFile={(path) => void openFileInDialog(path)}
+                onClose={() => setDiffOpen(false)}
+              />
+            ) : (
+              <IntegratedTerminal
+                language={language}
+                open={terminalOpen}
+                width={terminalWidth}
+                onWidthChange={setTerminalWidth}
+                onResizeStart={() => setTerminalResizing(true)}
+                onResizeEnd={() => setTerminalResizing(false)}
+                sessions={terminalSessions}
+                activeId={activeTerminalId}
+                outputs={terminalOutputs}
+                onToggle={() => { setDiffOpen(false); setTerminalOpen((value) => !value); }}
+                onCreate={(shell) => void createTerminal(shell)}
+                onClose={(id) => void closeTerminal(id)}
+                onSelect={setActiveTerminalId}
+                onInput={(id, value) => void sendTerminalInput(id, value)}
+              />
+            )}
           </div>
         )}
         {showPreview && activeView === "code" && (
@@ -2578,7 +2697,7 @@ function App() {
       {fileDialogOpen && (
         <FileDialog
           language={language}
-          rootPath={activeRun?.workspacePath ?? null}
+          rootPath={activeRun?.workspacePath ?? projectWorkspace ?? null}
           refreshKey={workspaceFileEventCount}
           tabs={openFileTabs}
           activePath={activeFilePath}
@@ -2765,7 +2884,8 @@ function App() {
           onAuthenticated={() => void refresh()}
         />
       )}
-      {notice && <div className="toast">{notice}</div>}
+      {/* Sağ-alt baloncuk (toast) kaldırıldı — UX'i bozuyordu. Mesajlar gerçek browser
+          console'una yazılıyor (aşağıdaki effect); kullanıcıya kritik olanlar zaten chat'te. */}
       {textPrompt && (
         <TextPromptModal
           state={textPrompt}
@@ -3409,6 +3529,7 @@ function ChatPanel({
   onDismissPipeline: () => void;
 }) {
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
   const text = uiText[language];
   const plannerLabels = plannerLabelsByLanguage[language];
   const modeMeta = modeMetaByLanguage[language];
@@ -3475,13 +3596,17 @@ function ChatPanel({
   const composerRef = useAutoGrow(value);
 
   useEffect(() => {
+    // Stick-to-bottom: yalnızca kullanıcı zaten en alttaysa (son ~120px) otomatik kaydır;
+    // geçmişi okumak için yukarı kaydırdıysa yerinde bırak.
+    const el = scrollRef.current;
+    if (el && el.scrollHeight - el.scrollTop - el.clientHeight > 120) return;
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages.length, thinking, suggestedPrompt]);
 
   return (
     <section className="chatPanel glassPanel">
 
-      <div className="chatMessages">
+      <div className="chatMessages" ref={scrollRef}>
         {messages.map((message) => (
           <article key={message.id ?? `${message.role}-${message.createdAt}`} className={`chatBubble ${message.role} compact`}>
             {message.role === "assistant" && (
@@ -5086,11 +5211,13 @@ function AgentActivitySection({
   events,
   language,
   onOpenFile,
+  onReview,
   running
 }: {
   events: RunEvent[];
   language: Language;
   onOpenFile?: (path: string) => void;
+  onReview?: () => void;
   running?: boolean;
 }) {
   const text = uiText[language];
@@ -5143,7 +5270,7 @@ function AgentActivitySection({
         <AgentActivityCard key={agentId} agentId={agentId} events={evts} />
       ))}
       {fileEvents.length > 0 && (
-        <FileChangeBundle files={fileEvents} language={language} onOpenFile={onOpenFile} />
+        <FileChangeBundle files={fileEvents} language={language} onOpenFile={onOpenFile} onReview={onReview} />
       )}
     </div>
   );
@@ -5228,14 +5355,16 @@ function formatRunDuration(run: Run | null, now: number, text: { elapsedSeconds:
 function FileChangeBundle({
   files,
   language,
-  onOpenFile
+  onOpenFile,
+  onReview
 }: {
   files: RunEvent[];
   language: Language;
   onOpenFile?: (path: string) => void;
+  onReview?: () => void;
 }) {
   const text = uiText[language];
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   const list = fileChangeSummary(files);
   const totalAdds = list.reduce((sum, f) => sum + f.adds, 0);
   const totalDels = list.reduce((sum, f) => sum + f.dels, 0);
@@ -5252,7 +5381,7 @@ function FileChangeBundle({
           </span>
         </div>
         <span className="fileBundleSpacer" />
-        <button className="fileBundleAction" onClick={() => setOpen((o) => !o)} title={text.review}>
+        <button className="fileBundleAction" onClick={() => onReview ? onReview() : setOpen((o) => !o)} title={text.review}>
           {text.review}
         </button>
       </div>
@@ -5417,6 +5546,9 @@ function FileExplorer({
   const [rootEntries, setRootEntries] = useState<FileEntry[]>([]);
   const [expanded, setExpanded] = useState<Record<string, FileEntry[]>>({});
   const [loading, setLoading] = useState(Boolean(rootPath));
+  // Açık klasör yollarını effect içinde deps eklemeden okumak için.
+  const expandedRef = useRef<Record<string, FileEntry[]>>({});
+  expandedRef.current = expanded;
 
   const loadDir = useCallback(async (dirPath?: string) => {
     const target = dirPath ?? rootPath;
@@ -5428,6 +5560,7 @@ function FileExplorer({
     return data.entries;
   }, [rootPath]);
 
+  // Yalnızca kök/proje değişince ağacı sıfırla ve kökü yükle.
   useEffect(() => {
     setExpanded({});
     if (!rootPath) {
@@ -5437,7 +5570,29 @@ function FileExplorer({
     }
     setLoading(true);
     loadDir().then((entries) => { setRootEntries(entries); setLoading(false); }).catch(() => setLoading(false));
-  }, [loadDir, rootPath, refreshKey]);
+  }, [loadDir, rootPath]);
+
+  // Dosya değişiklik olayında (refreshKey) ağacı KAPATMADAN tazele:
+  // kökü ve açık olan her dizini yeniden çek, açık durumları koru.
+  useEffect(() => {
+    if (!rootPath || refreshKey === 0) return;
+    let cancelled = false;
+    (async () => {
+      const root = await loadDir();
+      const paths = Object.keys(expandedRef.current);
+      const pairs = await Promise.all(paths.map(async (p) => [p, await loadDir(p)] as const));
+      if (cancelled) return;
+      setRootEntries(root);
+      if (pairs.length) {
+        setExpanded((cur) => {
+          const next = { ...cur };
+          for (const [p, children] of pairs) if (p in next) next[p] = children;
+          return next;
+        });
+      }
+    })().catch(() => {});
+    return () => { cancelled = true; };
+  }, [refreshKey, rootPath, loadDir]);
 
   const toggleDir = useCallback(async (dirPath: string) => {
     if (expanded[dirPath]) {
@@ -5453,24 +5608,29 @@ function FileExplorer({
       const isOpen = Boolean(expanded[entry.path]);
       return (
         <div key={entry.path}>
-          <button
-            className={`explorerRow ${entry.type}`}
-            style={{ paddingLeft: `${12 + depth * 16}px` }}
-            onClick={() => entry.type === "dir" ? void toggleDir(entry.path) : onOpenFile(entry.path)}
-          >
-            {entry.type === "dir" ? (
-              <>
-                <ChevronRight size={12} className={`explorerChevron${isOpen ? " open" : ""}`} />
-                {isOpen ? <FolderOpen size={14} /> : <Folder size={14} />}
-              </>
-            ) : (
-              <>
-                <span style={{ width: 12 }} />
-                <FileIcon size={14} />
-              </>
-            )}
-            <span className="explorerName">{entry.name}</span>
-          </button>
+          <div className="explorerRowWrap">
+            <button
+              className={`explorerRow ${entry.type}`}
+              style={{ paddingLeft: `${12 + depth * 16}px` }}
+              onClick={() => entry.type === "dir" ? void toggleDir(entry.path) : onOpenFile(entry.path)}
+            >
+              {entry.type === "dir" ? (
+                <>
+                  <ChevronRight size={12} className={`explorerChevron${isOpen ? " open" : ""}`} />
+                  {isOpen ? <FolderOpen size={14} /> : <Folder size={14} />}
+                </>
+              ) : (
+                <>
+                  <span style={{ width: 12 }} />
+                  <FileIcon size={14} />
+                </>
+              )}
+              <span className="explorerName">{entry.name}</span>
+            </button>
+            <span className="explorerVscodeBtn">
+              <VsCodeButton path={entry.path} label={text.openInVscode} compact />
+            </span>
+          </div>
           {isOpen && expanded[entry.path] && renderEntries(expanded[entry.path], depth + 1)}
         </div>
       );
@@ -5528,6 +5688,36 @@ function FileExplorer({
 
 // ─────────── Code Chat Panel (compact) ───────────
 
+// VS Code marka logosu (tek renkli SVG).
+function VsCodeIcon({ size = 15 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M23.15 2.587L18.21.21a1.494 1.494 0 0 0-1.705.29l-9.46 8.63-4.12-3.128a.999.999 0 0 0-1.276.057L.327 7.261A1 1 0 0 0 .326 8.74L3.899 12 .326 15.26a1 1 0 0 0 .001 1.479L1.65 17.94a.999.999 0 0 0 1.276.057l4.12-3.128 9.46 8.63a1.492 1.492 0 0 0 1.704.29l4.942-2.377A1.5 1.5 0 0 0 24 20.06V3.939a1.5 1.5 0 0 0-.85-1.352zm-5.146 14.861L10.826 12l7.178-5.448v10.896z" />
+    </svg>
+  );
+}
+
+// Markalı "VS Code Aç" butonu — dosyayı/yolu VS Code'da açar.
+function VsCodeButton({ path, label, compact }: { path: string; label: string; compact?: boolean }) {
+  return (
+    <button
+      className={`vscodeOpenBtn${compact ? " compact" : ""}`}
+      title={label}
+      onClick={(e) => {
+        e.stopPropagation();
+        void fetch("/api/open-in-vscode", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ path })
+        }).catch((err) => console.error("[Orkestra] VS Code açılamadı:", err));
+      }}
+    >
+      <VsCodeIcon size={compact ? 13 : 15} />
+      {!compact && <span>{label}</span>}
+    </button>
+  );
+}
+
 function FileDialog({
   language,
   rootPath,
@@ -5580,9 +5770,12 @@ function FileDialog({
                 </button>
               ))}
             </div>
-            <button className="iconButton" onClick={onClose} title={text.close}>
-              <X size={16} />
-            </button>
+            <div className="fileDialogHeadActions">
+              {activeTab && <VsCodeButton path={activeTab.path} label={text.openInVscode} />}
+              <button className="iconButton" onClick={onClose} title={text.close}>
+                <X size={16} />
+              </button>
+            </div>
           </div>
           {activeTab ? (
             <pre className="fileDialogContent"><code>{activeTab.content}</code></pre>
@@ -5596,6 +5789,148 @@ function FileDialog({
         </section>
       </div>
     </div>
+  );
+}
+
+// Unified diff metnini renkli satırlara ayrıştırır (kırmızı/yeşil + satır no).
+function renderDiffRows(diff: string): React.ReactNode {
+  const lines = diff.split("\n");
+  let oldLn = 0;
+  let newLn = 0;
+  const rows: React.ReactNode[] = [];
+  lines.forEach((line, i) => {
+    if (
+      line.startsWith("diff --git") || line.startsWith("index ") ||
+      line.startsWith("--- ") || line.startsWith("+++ ") ||
+      line.startsWith("new file") || line.startsWith("deleted file") ||
+      line.startsWith("old mode") || line.startsWith("new mode") ||
+      line.startsWith("similarity ") || line.startsWith("rename ") || line.startsWith("\\ No newline")
+    ) return;
+    if (line.startsWith("@@")) {
+      const m = line.match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+      if (m) { oldLn = Number(m[1]); newLn = Number(m[2]); }
+      rows.push(<div className="diffRow hunk" key={i}><span className="diffGutter" /><span className="diffGutter" /><code>{line}</code></div>);
+      return;
+    }
+    if (line.startsWith("+")) {
+      rows.push(<div className="diffRow add" key={i}><span className="diffGutter" /><span className="diffGutter">{newLn}</span><code>{line.slice(1) || " "}</code></div>);
+      newLn++;
+    } else if (line.startsWith("-")) {
+      rows.push(<div className="diffRow del" key={i}><span className="diffGutter">{oldLn}</span><span className="diffGutter" /><code>{line.slice(1) || " "}</code></div>);
+      oldLn++;
+    } else {
+      rows.push(<div className="diffRow ctx" key={i}><span className="diffGutter">{oldLn}</span><span className="diffGutter">{newLn}</span><code>{line.slice(1) || " "}</code></div>);
+      oldLn++; newLn++;
+    }
+  });
+  return rows;
+}
+
+// Sağ alan: VS Code tarzı working-tree diff paneli (terminal ile karşılıklı dışlayan).
+function DiffPanel({
+  language,
+  files,
+  loading,
+  width,
+  onWidthChange,
+  onResizeStart,
+  onResizeEnd,
+  onRefresh,
+  onOpenFile,
+  onClose
+}: {
+  language: Language;
+  files: DiffFile[];
+  loading: boolean;
+  width: number;
+  onWidthChange: (w: number) => void;
+  onResizeStart: () => void;
+  onResizeEnd: () => void;
+  onRefresh: () => void;
+  onOpenFile?: (path: string) => void;
+  onClose: () => void;
+}) {
+  const text = uiText[language];
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // İlk yüklemede ilk dosyayı aç.
+  useEffect(() => {
+    setExpanded((prev) => (prev.size === 0 && files.length ? new Set([files[0].path]) : prev));
+  }, [files]);
+
+  const totalAdds = files.reduce((s, f) => s + f.adds, 0);
+  const totalDels = files.reduce((s, f) => s + f.dels, 0);
+
+  const startResize = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = width;
+    onResizeStart();
+    const move = (ev: PointerEvent) => onWidthChange(Math.min(900, Math.max(320, startW + (startX - ev.clientX))));
+    const up = () => {
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", up);
+      document.body.style.userSelect = "";
+      onResizeEnd();
+    };
+    document.body.style.userSelect = "none";
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", up);
+  };
+
+  const toggle = (path: string) =>
+    setExpanded((prev) => { const n = new Set(prev); n.has(path) ? n.delete(path) : n.add(path); return n; });
+
+  return (
+    <section className="diffPanel">
+      <div className="terminalResizer" onPointerDown={startResize} title={text.resizeTerminal} />
+      <div className="diffPanelHead">
+        <div className="diffPanelTitle">
+          <GitCompare size={15} />
+          <span>{text.changes}</span>
+          {files.length > 0 && (
+            <span className="diffPanelStat"><span className="diffAdd">+{totalAdds}</span> <span className="diffDel">-{totalDels}</span></span>
+          )}
+        </div>
+        <div className="diffPanelActions">
+          <button className="iconButton" onClick={onRefresh} title={text.refresh}><RefreshCw size={14} /></button>
+          <button className="iconButton" onClick={onClose} title={text.close}><X size={15} /></button>
+        </div>
+      </div>
+      <div className="diffPanelBody">
+        {loading ? (
+          <div className="diffPanelEmpty"><span className="liveSpinner" /> {text.readingCli}</div>
+        ) : files.length === 0 ? (
+          <div className="diffPanelEmpty">{text.noChanges}</div>
+        ) : (
+          files.map((f) => {
+            const open = expanded.has(f.path);
+            return (
+              <div className={`diffFile${open ? " open" : ""}`} key={f.path}>
+                <button className="diffFileHead" onClick={() => toggle(f.path)}>
+                  <ChevronRight size={12} className={`explorerChevron${open ? " open" : ""}`} />
+                  <span className="diffFileName" title={f.path}>{f.path}</span>
+                  <span className="diffFileStat"><span className="diffAdd">+{f.adds}</span> <span className="diffDel">-{f.dels}</span></span>
+                  {onOpenFile && (
+                    <span
+                      className="diffFileOpen"
+                      title={text.openInVscode}
+                      onClick={(e) => { e.stopPropagation(); onOpenFile(f.path); }}
+                    >
+                      <Code2 size={12} />
+                    </span>
+                  )}
+                </button>
+                {open && (
+                  <div className="diffFileBody">
+                    {f.binary ? <div className="diffBinary">{text.binaryFile}</div> : renderDiffRows(f.diff)}
+                  </div>
+                )}
+              </div>
+            );
+          })
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -5802,7 +6137,7 @@ function CodeChatPanel({
   attachments, onAddImage, onRemoveImage,
   conversations, activeConversationId, onOpenConversation, onDeleteConversation, onNewChat,
   projects, activeProjectId, onSwitchProject, onNewProject, onDeleteProject,
-  run, events, onOpenFile, onTogglePreview, previewOpen, previewAvailable
+  run, events, onOpenFile, onReview, onTogglePreview, previewOpen, previewAvailable
 }: {
   language: Language;
   status: CliStatusResponse | null;
@@ -5864,6 +6199,7 @@ function CodeChatPanel({
   run: Run | null;
   events: RunEvent[];
   onOpenFile?: (path: string) => void;
+  onReview?: () => void;
   onTogglePreview: () => void;
   previewOpen: boolean;
   previewAvailable: boolean;
@@ -5872,6 +6208,7 @@ function CodeChatPanel({
   const plannerLabels = plannerLabelsByLanguage[language];
   const modeMeta = modeMetaByLanguage[language];
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const composerRef = useAutoGrow(value);
   const recognitionRef = useRef<any>(null);
@@ -5882,9 +6219,7 @@ function CodeChatPanel({
   const transcriptRef = useRef("");
   const sendAfterRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [briefOpen, setBriefOpen] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
-  const [now, setNow] = useState(Date.now());
   const voiceSupported = typeof window !== "undefined" && Boolean((window as any).webkitSpeechRecognition || (window as any).SpeechRecognition);
 
   function startVoice() {
@@ -5938,19 +6273,11 @@ function CodeChatPanel({
   const recordClock = `${Math.floor(recordSeconds / 60)}:${String(recordSeconds % 60).padStart(2, "0")}`;
 
   useEffect(() => {
+    // Stick-to-bottom: kullanıcı yukarı kaydırıp logları okuyorsa geri çekme.
+    const el = scrollRef.current;
+    if (el && el.scrollHeight - el.scrollTop - el.clientHeight > 120) return;
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages.length, events.length, thinking]);
-
-  // Aktif run varsa süre sayacını canlı tut.
-  useEffect(() => {
-    if (run && run.status === "running") {
-      const id = setInterval(() => setNow(Date.now()), 1000);
-      return () => clearInterval(id);
-    }
-  }, [run?.status, run?.id]);
-
-  const runDuration = formatRunDuration(run, now, text);
-  const fileTotals = computeFileTotals(events);
 
   return (
     <section className="codeChatPanel glassPanel">
@@ -5963,35 +6290,7 @@ function CodeChatPanel({
         </div>
       )}
 
-      {run && (
-        <div className={`runBanner status-${run.status}`}>
-          <div className="runBannerMain">
-            <span className={`runBannerDot ${run.status}`} />
-            <strong>{run.activeStep || run.status}</strong>
-            <span className="runBannerMeta">{runDuration}</span>
-            {fileTotals.count > 0 && (
-              <span className="runBannerMeta">
-                {fileTotals.count} {text.fileEditedNoun} · <span className="diffAdd">+{fileTotals.adds}</span> <span className="diffDel">-{fileTotals.dels}</span>
-              </span>
-            )}
-          </div>
-          <button
-            className="runBannerBriefBtn"
-            onClick={() => setBriefOpen((open) => !open)}
-            title={text.briefShartname}
-          >
-            {briefOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-            Brief
-          </button>
-        </div>
-      )}
-      {run && briefOpen && (
-        <div className="runBriefInline">
-          <pre>{run.prompt}</pre>
-        </div>
-      )}
-
-      <div className="codeChatMessages">
+      <div className="codeChatMessages" ref={scrollRef}>
         {messages.map((msg) =>
           msg.planner === "analysis" ? (
             <AnalysisCard
@@ -6017,7 +6316,7 @@ function CodeChatPanel({
         )}
         {/* Canlı aktivite (yapılan değişiklikler) mesajların hemen altında, aksiyon barlarının ÜSTÜNDE.
             Faz onayı beklerken spinner gösterme (run "awaiting" durumunda stale "kodluyor" çıkmasın). */}
-        {run && <AgentActivitySection events={events} language={language} onOpenFile={onOpenFile} running={runActive && !phasePending} />}
+        {(run || events.length > 0) && <AgentActivitySection events={events} language={language} onOpenFile={onOpenFile} onReview={onReview} running={runActive && !phasePending} />}
         {operatorAnalyzing && (
           <div className="operatorAnalyzing">
             <span className="liveSpinner" />
@@ -6263,43 +6562,54 @@ function CodeChatPanel({
 function BrowserPreview({ run, language, onClose }: { run: Run | null; language: Language; onClose: () => void }) {
   const text = uiText[language];
   const [refreshKey, setRefreshKey] = useState(0);
-  const [entry, setEntry] = useState<string | null>(null);
-  const [previewAvailable, setPreviewAvailable] = useState(false);
+  const [info, setInfo] = useState<{ type: "vite" | "static" | "none"; entry?: string }>({ type: "none" });
+  const [vite, setVite] = useState<{ status: string; url: string } | null>(null);
   // DOĞRUDAN backend (8787): göreli URL Vite SPA fallback'ine düşüp Orkestra arayüzünü gösteriyordu.
   // CORS backend'de açık. localhost→127.0.0.1 (IPv6 ::1 bağlantı reddini önler).
   const backendHost = window.location.hostname === "localhost" ? "127.0.0.1" : window.location.hostname;
   const backendOrigin = `${window.location.protocol}//${backendHost}:8787`;
-  const previewUrl = run && entry ? `${backendOrigin}/preview/${run.id}/${entry}` : null;
 
+  // 1) Proje tipini (+ statik giriş) algıla.
   useEffect(() => {
     let cancelled = false;
-    if (!run) {
-      setEntry(null);
-      setPreviewAvailable(false);
-      return;
-    }
-    fetch(`${backendOrigin}/preview-entry/${run.id}`, { cache: "no-store" })
-      .then((response) => (response.ok ? response.json() : null))
-      .then((data: { entry?: string } | null) => {
-        if (cancelled) return;
-        if (data?.entry) {
-          setEntry(data.entry);
-          setPreviewAvailable(true);
-        } else {
-          setEntry(null);
-          setPreviewAvailable(false);
-        }
+    if (!run) { setInfo({ type: "none" }); setVite(null); return; }
+    fetch(`${backendOrigin}/api/preview/info/${run.id}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { type?: "vite" | "static" | "none"; entry?: string } | null) => {
+        if (!cancelled) setInfo({ type: d?.type ?? "none", entry: d?.entry });
       })
-      .catch(() => {
-        if (!cancelled) {
-          setEntry(null);
-          setPreviewAvailable(false);
-        }
-      });
-    return () => {
-      cancelled = true;
+      .catch(() => { if (!cancelled) setInfo({ type: "none" }); });
+    return () => { cancelled = true; };
+  }, [run?.id, refreshKey, backendOrigin]);
+
+  // 2) Vite ise dev sunucusunu başlat ve durumu poll'la.
+  useEffect(() => {
+    if (!run || info.type !== "vite") return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const apply = (d: { status?: string; url?: string } | null) => {
+      if (cancelled || !d?.url) return;
+      setVite({ status: d.status ?? "starting", url: d.url });
+      if (d.status !== "ready" && d.status !== "error") timer = setTimeout(poll, 1500);
     };
-  }, [run?.id, refreshKey]);
+    const poll = () => {
+      fetch(`${backendOrigin}/api/preview/status/${run.id}`, { cache: "no-store" })
+        .then((r) => (r.ok ? r.json() : null))
+        .then(apply)
+        .catch(() => { if (!cancelled) timer = setTimeout(poll, 2000); });
+    };
+    fetch(`${backendOrigin}/api/preview/start/${run.id}`, { method: "POST" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then(apply)
+      .catch(() => {});
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
+  }, [run?.id, info.type, refreshKey, backendOrigin]);
+
+  const staticUrl = run && info.type === "static" && info.entry ? `${backendOrigin}/preview/${run.id}/${info.entry}` : null;
+  const viteReady = info.type === "vite" && vite?.status === "ready" ? vite.url : null;
+  const previewUrl = staticUrl ?? viteReady;
+  const viteLoading = info.type === "vite" && vite && vite.status !== "ready" && vite.status !== "error";
+  const viteError = info.type === "vite" && vite?.status === "error";
 
   return (
     <section className="glassPanel browserPreview">
@@ -6309,7 +6619,7 @@ function BrowserPreview({ run, language, onClose }: { run: Run | null; language:
           <span>{text.preview}</span>
         </div>
         <div className="previewActions">
-          {previewUrl && previewAvailable && (
+          {previewUrl && (
             <>
               <button className="iconButton" onClick={() => setRefreshKey((k) => k + 1)} title={text.refreshPreview}>
                 <RefreshCw size={13} />
@@ -6325,8 +6635,19 @@ function BrowserPreview({ run, language, onClose }: { run: Run | null; language:
         </div>
       </div>
       <div className="previewBody">
-        {previewUrl && previewAvailable ? (
-          <iframe key={refreshKey} src={previewUrl} className="previewFrame" title="Preview" sandbox="allow-scripts allow-same-origin" />
+        {previewUrl ? (
+          <iframe key={`${refreshKey}-${previewUrl}`} src={previewUrl} className="previewFrame" title="Preview" sandbox="allow-scripts allow-same-origin allow-forms allow-popups" />
+        ) : viteLoading ? (
+          <div className="previewEmpty">
+            <span className="liveSpinner" />
+            <h4>{vite?.status === "installing" ? text.previewInstalling : text.previewStarting}</h4>
+            <p>{text.noPreviewDesc}</p>
+          </div>
+        ) : viteError ? (
+          <div className="previewEmpty">
+            <AlertTriangle size={34} />
+            <h4>{text.previewError}</h4>
+          </div>
         ) : (
           <div className="previewEmpty">
             <Eye size={36} />

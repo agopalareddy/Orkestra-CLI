@@ -6,6 +6,10 @@ import { interpolateArgs } from "./template";
 import type { Store } from "./db";
 import type { EventHub } from "./events";
 
+// Ajan başına yürütme zaman aşımı (saniye). Gerçek kodlama görevleri 5 dk'yı kolayca aşar;
+// varsayılan 30 dk. ORKESTRA_AGENT_TIMEOUT_SECONDS ile değiştirilebilir.
+const AGENT_TIMEOUT_SECONDS = Math.max(60, Number(process.env.ORKESTRA_AGENT_TIMEOUT_SECONDS ?? 1800));
+
 // agy çalışmadan ÖNCE workspace'i settings.json'daki trustedWorkspaces'e ekler →
 // agy "Do you trust this folder?" sormadan headless çalışır (interaktif onay gerekmez).
 export function ensureAgyTrusted(workspacePath: string) {
@@ -227,11 +231,25 @@ export class Runner {
       .map((d) => done.get(d))
       .filter(Boolean)
       .join("\n\n");
+    // Faz devamlılığı: önceki fazların/görevlerin ürettiği mevcut dosyaları prompt'a koy ki
+    // ajan sıfırdan yazmasın, üzerine inşa etsin.
+    const existingFiles = listWorkspaceFiles(run.workspacePath);
+    const existingBlock = existingFiles.length
+      ? [
+          "",
+          "Çalışma alanında ZATEN var olan dosyalar (önceki görevler/fazlar oluşturdu):",
+          existingFiles.map((f) => `- ${f}`).join("\n"),
+          "",
+          "ÖNEMLİ: Bu dosyaları sıfırdan yeniden YAZMA. Önce ilgili olanları OKU; yalnızca görevini",
+          "tamamlamak için gerekli ekleme/düzenlemeleri yap. Mevcut yapıyı, isimlendirmeyi ve stili koru."
+        ].join("\n")
+      : "";
     const promptText = [
       "Sen bir EKİP çalışmasında bir alt-görevi üstlendin.",
       `Görevin: ${task.title}`,
       folder ? `Bu görev için çalışma klasörü: ${folder} (dosyalarını buraya yaz).` : "",
       depContext ? `\nBağımlı olduğun önceki görevlerin çıktısı:\n${depContext}` : "",
+      existingBlock,
       "",
       "Projenin genel amacı:",
       run.prompt,
@@ -583,12 +601,33 @@ function adHocAgent(cli: string, model: string | undefined, role: string): Agent
     command,
     argsTemplate,
     enabled: true,
-    timeoutSeconds: 300,
+    timeoutSeconds: AGENT_TIMEOUT_SECONDS,
     fallbackAgentIds: [],
     limitPatterns: ["limit", "quota", "rate_limit", "429", "exhausted"],
     status: "available",
     lastLimitedAt: null
   };
+}
+
+// Workspace'teki mevcut dosyaları (göreli yol) listeler — prompt'a "zaten var, üzerine inşa et"
+// bağlamı vermek için. Faz devamlılığı: ajan önceki fazların ürettiklerini görür, sıfırdan yazmaz.
+function listWorkspaceFiles(root: string, limit = 120): string[] {
+  const out: string[] = [];
+  const skip = new Set(["node_modules", ".git", "dist", "build", "PROMPT.md", "TRANSCRIPT.md", ".orkestra-phase.json"]);
+  const walk = (dir: string, rel: string) => {
+    if (out.length >= limit) return;
+    let entries;
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (out.length >= limit) return;
+      if (e.name.startsWith(".") || skip.has(e.name)) continue;
+      const childRel = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isDirectory()) walk(join(dir, e.name), childRel);
+      else out.push(childRel);
+    }
+  };
+  walk(root, "");
+  return out;
 }
 
 // ─── Kalıcı faz state (.orkestra-phase.json) — durdurma/yeniden başlatma sonrası resume için ───

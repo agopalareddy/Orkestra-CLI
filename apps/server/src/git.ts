@@ -1,8 +1,15 @@
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import type { GitStatus } from "../../../packages/shared/types";
 
 const exec = promisify(execFile);
+
+// Baz commit'ler için kimlik (depoda global ayar olmayabilir).
+const IDENTITY = ["-c", "user.email=orkestra@local", "-c", "user.name=Orkestra"];
+
+export type DiffFile = { path: string; adds: number; dels: number; diff: string; binary: boolean };
 
 const blockedPatterns = [
   /^\.env($|\.)/i,
@@ -41,6 +48,38 @@ export class GitService {
         }),
       diffStat
     };
+  }
+
+  // Run başında çağrılır: workspace'i git deposu yap ve mevcut (run öncesi) durumu
+  // baz commit'le. Böylece sonradan `git diff HEAD` yalnızca bu run'ın değişikliklerini gösterir.
+  async commitBaseline() {
+    if (!existsSync(join(this.cwd, ".git"))) {
+      await this.git(["init"]).catch(() => {});
+    }
+    await this.git(["add", "-A"]).catch(() => {});
+    // Bir şey yoksa bile HEAD oluşsun (ilk run boş workspace olabilir).
+    await this.git([...IDENTITY, "commit", "-m", "orkestra baseline", "--allow-empty"]).catch(() => {});
+  }
+
+  // Çalışma ağacının HEAD'e göre farkı — yeni dosyalar dahil, dosya başına unified diff.
+  async workingDiff(): Promise<DiffFile[]> {
+    if (!existsSync(join(this.cwd, ".git"))) return [];
+    // Yeni (untracked) dosyaların da diff'e girmesi için indekse al, sonunda geri çek.
+    await this.git(["add", "-A"]).catch(() => {});
+    const numstat = await this.git(["diff", "--cached", "--numstat"]).catch(() => "");
+    const files: DiffFile[] = [];
+    for (const line of numstat.split(/\r?\n/).filter(Boolean)) {
+      const cols = line.split("\t");
+      const adds = cols[0];
+      const dels = cols[1];
+      const path = cols.slice(2).join("\t");
+      if (!path || blockedReason(path)) continue; // gizli/secret dosyaları gösterme
+      const binary = adds === "-" || dels === "-";
+      const diff = binary ? "" : await this.git(["diff", "--cached", "--", path]).catch(() => "");
+      files.push({ path, adds: binary ? 0 : Number(adds) || 0, dels: binary ? 0 : Number(dels) || 0, diff, binary });
+    }
+    await this.git(["reset"]).catch(() => {}); // indeksi geri al (çalışma ağacı diskte kalır)
+    return files;
   }
 
   async createBranch(branch: string) {
