@@ -106,7 +106,7 @@ const plannerLabelsByLanguage: Record<Language, Record<PlannerChoice, string>> =
     debate: "Debate Board",
     codex: "OpenAI Codex",
     claude: "Claude Code",
-    antigravity: "Gemini CLI"
+    antigravity: "Antigravity CLI"
   },
   tr: {
     auto: "Otomatik",
@@ -114,7 +114,7 @@ const plannerLabelsByLanguage: Record<Language, Record<PlannerChoice, string>> =
     debate: "Tartışma Panosu",
     codex: "OpenAI Codex",
     claude: "Claude Code",
-    antigravity: "Gemini CLI"
+    antigravity: "Antigravity CLI"
   }
 };
 
@@ -166,6 +166,8 @@ const uiText = {
     cancel: "Cancel",
     approveBrief: "Approve and Send to Code",
     agentCenter: "Limit Management",
+    cliSection: "CLIs",
+    limitsTitle: "Limits",
     collapseSidebar: "Collapse sidebar",
     expandSidebar: "Expand sidebar",
     refresh: "Refresh",
@@ -231,7 +233,7 @@ const uiText = {
     loginRequired: "Login required",
     quotaIssue: "Quota issue",
     responding: "Responding",
-    geminiVerified: "Gemini verified",
+    geminiVerified: "Antigravity verified",
     verified: "Verified",
     resets: "resets",
     staleUsage: "Warning: stale data - waiting for cligate update",
@@ -282,6 +284,80 @@ const uiText = {
     operatorSelect: "Select operator",
     auto: "Auto",
     searchModels: "Search models…",
+    setupTitle: "Orkestra Setup",
+    setupWelcome: "Let's get Orkestra ready: choose preferences, install and sign in to the CLIs.",
+    language: "Language",
+    theme: "Theme",
+    lightMode: "Light",
+    darkMode: "Dark",
+    back: "Back",
+    stepLangTheme: "Preferences",
+    stepInstall: "Install packages",
+    stepAuth: "Sign in & test",
+    stepAuthorize: "Authorization",
+    stepDone: "Done",
+    installLead: "Install the CLI packages needed for the agents.",
+    install: "Install",
+    reinstall: "Reinstall",
+    installed: "Installed",
+    installHint: "Installation runs in a new terminal. When it finishes, click Refresh.",
+    installHintHeadless: "Installs run in the background (no window). agy may take 1–2 min.",
+    installAll: "Install all",
+    installingNow: "Installing…",
+    installWarn: "Not installed (their agents can't be used until installed)",
+    installNeedOne: "Install at least one CLI to continue (the others can be installed later).",
+    authLead: "Sign in to each CLI and test it.",
+    authorizedOk: "Signed in",
+    notAuthorized: "Not signed in",
+    authHint: "Login opens a terminal; complete it there, then Test.",
+    authHintLive: "Login opens in your browser; completion is detected automatically (no Refresh needed).",
+    waitingLogin: "Waiting for login…",
+    loginStep1: "Open the authentication link in your browser and sign in.",
+    openBrowser: "Open in browser",
+    loginWaitingUrl: "Waiting for the authentication link…",
+    loginStep2: "Paste the code from the browser here and send it.",
+    pasteCode: "Paste the verification code",
+    loginRawOutput: "Terminal output",
+    loginTermHint: "Use the buttons (or click the terminal and type) to navigate: ↑/↓ to move, Enter to confirm.",
+    spaceKey: "Space",
+    enterKey: "Enter",
+    loginPasteHint: "Open the link, copy the code shown in the browser, paste it here and press Send.",
+    loginKbdHint: "Click the terminal to type. Navigate with ↑/↓ (and ←/→ between buttons), Enter to confirm.",
+    loginWindowIntro: "A real terminal window opens. Do these steps there (the window closes itself when done):",
+    openLoginWindow: "Open login window",
+    opening: "Opening…",
+    loginWindowOpened: "Window opened — finish the steps there. Sign-in is detected automatically and the window closes.",
+    reopenWindow: "Reopen window",
+    guideMethodTitle: "Choose login method",
+    guideMethod: "‘Google OAuth’ is already selected — just press Enter.",
+    guideDeviceTitle: "Sign in with Google",
+    guideDevice: "The browser opens; sign in. Copy the code on the page, paste it into the terminal and press Enter.",
+    guideColorTitle: "Choose a color scheme",
+    guideColor: "Pick a theme with ↑/↓ and press Enter.",
+    guideTosTitle: "Accept the Terms",
+    guideTos: "[Done] is already selected (green) — press Enter. To decline telemetry, press Space on the checkbox first.",
+    guideTrustTitle: "Trust the folder",
+    guideTrust: "Confirm trusting the folder (Enter). Sign-in completes and the window closes.",
+    guideSimpleBrowserTitle: "Sign in in the browser",
+    guideSimpleBrowser: "The browser opens; sign in (paste the code if the terminal asks).",
+    guideSimpleDoneTitle: "Done",
+    guideSimpleDone: "When sign-in completes, the window closes automatically.",
+    loginAutoDetect: "When login completes, it's detected automatically — no separate terminal needed.",
+    loginDone: "Signed in!",
+    authorizeTitle: "Agent authorization",
+    authorizeDesc: "Agents run with full access so they can work without interruptions:",
+    authorizeItem1: "Trust the working folder",
+    authorizeItem2: "Act without per-action approval prompts",
+    authorizeItem3: "Read/write files & run commands in the workspace",
+    authorizeConfirm: "I grant the agents full access.",
+    setupDoneTitle: "Setup complete!",
+    notReady: "Not ready",
+    needOneCli: "At least one CLI must be installed and signed in to continue.",
+    startApp: "Start using Orkestra",
+    settings: "Settings",
+    settingsTitle: "Settings",
+    resetSetup: "Reset & re-run setup",
+    resetSetupDesc: "Re-open the first-launch setup wizard (install / sign-in / preferences).",
     noResults: "No results.",
     collapse: "Collapse",
     expand: "Expand",
@@ -413,6 +489,8 @@ const uiText = {
     cancel: "İptal",
     approveBrief: "Onayla ve Code'a aktar",
     agentCenter: "Limit Yönetimi",
+    cliSection: "CLI'lar",
+    limitsTitle: "Limitler",
     collapseSidebar: "Paneli kapat",
     expandSidebar: "Paneli aç",
     refresh: "Yenile",
@@ -478,7 +556,7 @@ const uiText = {
     loginRequired: "Giriş gerekli",
     quotaIssue: "Kota sorunu",
     responding: "Yanıt veriyor",
-    geminiVerified: "Gemini doğrulandı",
+    geminiVerified: "Antigravity doğrulandı",
     verified: "Doğrulandı",
     resets: "sıfırlanır",
     staleUsage: "Veri eski - cligate güncellemesi bekleniyor",
@@ -529,6 +607,80 @@ const uiText = {
     operatorSelect: "Operatör Seçimi",
     auto: "Otomatik",
     searchModels: "Model ara…",
+    setupTitle: "Orkestra Kurulumu",
+    setupWelcome: "Orkestra'yı hazırlayalım: tercihleri seç, CLI'leri kur ve giriş yap.",
+    language: "Dil",
+    theme: "Tema",
+    lightMode: "Açık",
+    darkMode: "Koyu",
+    back: "Geri",
+    stepLangTheme: "Tercihler",
+    stepInstall: "Paket kurulumu",
+    stepAuth: "Giriş & test",
+    stepAuthorize: "Yetkilendirme",
+    stepDone: "Bitti",
+    installLead: "Ajanlar için gerekli CLI paketlerini kur.",
+    install: "Kur",
+    reinstall: "Yeniden kur",
+    installed: "Kurulu",
+    installHint: "Kurulum yeni bir terminalde çalışır. Bitince Yenile'ye bas.",
+    installHintHeadless: "Kurulumlar arka planda (penceresiz) çalışır. agy 1–2 dk sürebilir.",
+    installAll: "Tümünü Kur",
+    installingNow: "Kuruluyor…",
+    installWarn: "Kurulmadı (ajanları kurulmadan kullanılamaz)",
+    installNeedOne: "Devam etmek için en az bir CLI kur (diğerleri sonra kurulabilir).",
+    authLead: "Her CLI'ye giriş yap ve test et.",
+    authorizedOk: "Giriş yapıldı",
+    notAuthorized: "Giriş yapılmadı",
+    authHint: "Giriş bir terminal açar; orada tamamla, sonra Test et.",
+    authHintLive: "Giriş tarayıcıda açılır; tamamlanınca otomatik algılanır (Yenile gerekmez).",
+    waitingLogin: "Giriş bekleniyor…",
+    loginStep1: "Doğrulama linkini tarayıcıda aç ve giriş yap.",
+    openBrowser: "Tarayıcıda aç",
+    loginWaitingUrl: "Doğrulama linki bekleniyor…",
+    loginStep2: "Tarayıcıdaki kodu buraya yapıştırıp gönder.",
+    pasteCode: "Doğrulama kodunu yapıştır",
+    loginRawOutput: "Terminal çıktısı",
+    loginTermHint: "Butonlarla (veya terminale tıklayıp klavyeyle) gez: ↑/↓ taşı, Enter onayla.",
+    spaceKey: "Boşluk",
+    enterKey: "Enter",
+    loginPasteHint: "Linki aç, tarayıcıdaki kodu kopyala, buraya yapıştır ve Gönder'e bas.",
+    loginKbdHint: "Yazmak için terminale tıkla. ↑/↓ ile gez (butonlar arası ←/→), Enter ile onayla.",
+    loginWindowIntro: "Gerçek bir terminal penceresi açılacak. Adımları orada yap (bitince pencere kendiliğinden kapanır):",
+    openLoginWindow: "Giriş penceresini aç",
+    opening: "Açılıyor…",
+    loginWindowOpened: "Pencere açıldı — adımları orada tamamla. Giriş otomatik algılanır ve pencere kapanır.",
+    reopenWindow: "Yeniden aç",
+    guideMethodTitle: "Giriş yöntemini seç",
+    guideMethod: "‘Google OAuth’ zaten seçili gelir — sadece Enter'a bas.",
+    guideDeviceTitle: "Google ile giriş yap",
+    guideDevice: "Tarayıcı açılır; giriş yap. Sayfadaki kodu kopyala, terminale yapıştır, Enter'a bas.",
+    guideColorTitle: "Renk şeması seç",
+    guideColor: "↑/↓ ile bir tema seç, Enter'a bas.",
+    guideTosTitle: "Şartları kabul et",
+    guideTos: "[Done] zaten seçili gelir (yeşil) — Enter'a bas. Telemetri istemezsen önce onay kutusunda Boşluk'a bas.",
+    guideTrustTitle: "Klasörü güven (Trust folder)",
+    guideTrust: "Klasörü güvenmeyi onayla (Enter). Giriş tamamlanır ve pencere kapanır.",
+    guideSimpleBrowserTitle: "Tarayıcıda giriş yap",
+    guideSimpleBrowser: "Tarayıcı açılır; giriş yap (terminal isterse kodu yapıştır).",
+    guideSimpleDoneTitle: "Bitti",
+    guideSimpleDone: "Giriş tamamlanınca pencere otomatik kapanır.",
+    loginAutoDetect: "Giriş tamamlanınca otomatik algılanır — ayrı terminal gerekmez.",
+    loginDone: "Giriş yapıldı!",
+    authorizeTitle: "Ajan yetkilendirme",
+    authorizeDesc: "Ajanlar kesintisiz çalışabilmek için tam erişimle çalışır:",
+    authorizeItem1: "Çalışma klasörünü güven (trust folder)",
+    authorizeItem2: "Her işlem için ayrı onay sormadan çalış",
+    authorizeItem3: "Workspace'te dosya okuma/yazma ve komut çalıştırma",
+    authorizeConfirm: "Ajanlara tam erişim veriyorum.",
+    setupDoneTitle: "Kurulum tamamlandı!",
+    notReady: "Hazır değil",
+    needOneCli: "Devam etmek için en az bir CLI kurulu ve giriş yapılmış olmalı.",
+    startApp: "Orkestra'yı kullanmaya başla",
+    settings: "Ayarlar",
+    settingsTitle: "Ayarlar",
+    resetSetup: "Sıfırla & sihirbazı çalıştır",
+    resetSetupDesc: "İlk açılış kurulum sihirbazını yeniden aç (kurulum / giriş / tercihler).",
     noResults: "Sonuç yok.",
     collapse: "Daralt",
     expand: "Genişlet",
@@ -829,6 +981,11 @@ function App() {
   const [cliStatus, setCliStatus] = useState<CliStatusResponse | null>(null);
   const [gitStatus, setGitStatus] = useState<GitStatus | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // İlk açılış kurulum sihirbazı tamamlandı mı?
+  const [setupDone, setSetupDone] = useState<boolean>(() => localStorage.getItem("orkestra.setupDone") === "1");
+  // Ayarlar dialog'u açık mı?
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [loginModal, setLoginModal] = useState<{ tool: CliToolStatus } | null>(null);
   // Sol panel (sidebar) aç/kapa — ChatGPT tarzı; tercih localStorage'da saklanır.
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => localStorage.getItem("orkestra.sidebarCollapsed") === "1");
   useEffect(() => {
@@ -1620,7 +1777,7 @@ function App() {
       ]);
       if (response.action === "suggest_pipeline") setSuggestedPrompt(response.suggestedPrompt ?? content);
       if (response.error) {
-        setNotice(`${text.fallbackUsed} ${response.error}`);
+        // Sağ-alt baloncuk (toast) yok — hata zaten sohbette/stream'de görünüyor.
         setStreamItems((current) => [
           ...current,
           {
@@ -1979,7 +2136,38 @@ function App() {
     setEvents(detail.events);
   }
 
-  async function runCliAction(tool: CliToolStatus, action: "login" | "logout" | "test") {
+  // Kurulumu pty'de (non-blocking) başlatır ve KURULANA kadar durumu sık yoklar → anlık "kuruldu".
+  async function installCliAsync(tool: CliToolStatus): Promise<{ success: boolean; message: string }> {
+    setNotice(null);
+    try {
+      const res = await api.post<{ message?: string }>(`/api/cli/${tool.id}/install`);
+      if (res.message) setNotice(res.message);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setNotice(`${displayToolName(tool.id)}: ${message}`);
+      return { success: false, message };
+    }
+    const deadline = Date.now() + 8 * 60_000; // agy uzun sürebilir
+    return new Promise<{ success: boolean; message: string }>((resolve) => {
+      const tick = async () => {
+        const status = await api.get<CliStatusResponse>("/api/cli-status").catch(() => null);
+        if (status) setCliStatus(status);
+        const t = status?.tools.find((x) => x.id === tool.id);
+        if (t?.installed) { setNotice(`${displayToolName(tool.id)}: kuruldu.`); resolve({ success: true, message: "kuruldu" }); return; }
+        if (Date.now() > deadline) { setNotice(`${displayToolName(tool.id)}: kurulum zaman aşımı.`); resolve({ success: false, message: "timeout" }); return; }
+        setTimeout(() => void tick(), 2500);
+      };
+      setTimeout(() => void tick(), 2500);
+    });
+  }
+
+  // Login rehber dialog'unu açar (pencere kullanıcı isteyince açılır).
+  async function loginCliAsync(tool: CliToolStatus): Promise<void> {
+    setNotice(null);
+    setLoginModal({ tool });
+  }
+
+  async function runCliAction(tool: CliToolStatus, action: "login" | "logout" | "test" | "install") {
     setNotice(null);
     try {
       const result = await api.post<unknown>(`/api/cli/${tool.id}/${action}`);
@@ -1992,7 +2180,7 @@ function App() {
       } else {
         await refresh();
       }
-      if (action === "login" && typeof result === "object" && result && "message" in result) {
+      if ((action === "login" || action === "install") && typeof result === "object" && result && "message" in result) {
         setNotice(String((result as { message: unknown }).message));
       } else {
         const updated = result as CliToolStatus;
@@ -2093,17 +2281,13 @@ function App() {
       </div>
       <div className="sidebarHeaderActions">
         <button
-          className="iconButton themeToggle"
-          onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))}
-          title={theme === "light" ? text.switchDark : text.switchLight}
+          className="iconButton"
+          onClick={() => setSettingsOpen(true)}
+          title={text.settings}
           style={{ width: "32px", height: "32px", padding: 0 }}
         >
-          {theme === "light" ? <Moon size={16} /> : <Sun size={16} />}
+          <Settings2 size={16} />
         </button>
-        <div className="languageSwitch">
-          <button className={language === "en" ? "active" : ""} onClick={() => setLanguage("en")}>EN</button>
-          <button className={language === "tr" ? "active" : ""} onClick={() => setLanguage("tr")}>TR</button>
-        </div>
         <div className={`connectionPill ${online ? "online" : "offline"}`} title={online ? text.connected : text.disconnected}>
           <span />
         </div>
@@ -2129,16 +2313,30 @@ function App() {
       <div className="railSpacer" />
       <button
         className="railBtn"
-        onClick={(e) => { e.stopPropagation(); setTheme((t) => (t === "light" ? "dark" : "light")); }}
-        title={theme === "light" ? text.switchDark : text.switchLight}
+        onClick={(e) => { e.stopPropagation(); setSettingsOpen(true); }}
+        title={text.settings}
       >
-        {theme === "light" ? <Moon size={18} /> : <Sun size={18} />}
+        <Settings2 size={18} />
       </button>
     </div>
   );
 
   return (
     <main className="appShell">
+      {!setupDone && (
+        <SetupWizard
+          language={language}
+          theme={theme}
+          status={cliStatus}
+          onSetLanguage={setLanguage}
+          onSetTheme={(t) => setTheme(t)}
+          onAction={(tool, action) => void runCliAction(tool, action)}
+          onInstall={installCliAsync}
+          onLogin={loginCliAsync}
+          onRefresh={() => void refresh()}
+          onFinish={() => { localStorage.setItem("orkestra.setupDone", "1"); setSetupDone(true); }}
+        />
+      )}
       <section className={`workspace${sidebarCollapsed ? " sidebarCollapsed" : ""}`}>
         {activeView === "chat" ? (
           <>
@@ -2153,13 +2351,6 @@ function App() {
                 onNew={newChat}
                 onOpen={openConversation}
                 onDelete={deleteConversation}
-              />
-              <AgentCenter
-                language={language}
-                status={cliStatus}
-                gitStatus={gitStatus}
-                onRefresh={() => void refresh()}
-                onAction={(tool, action) => void runCliAction(tool, action)}
               />
               </>
               )}
@@ -2260,14 +2451,6 @@ function App() {
                 onNewSession={newSessionInProject}
                 onOpenSession={openConversation}
                 onDeleteSession={deleteConversation}
-              />
-              <AgentCenter
-                language={language}
-                status={cliStatus}
-                gitStatus={gitStatus}
-                onRefresh={() => void refresh()}
-                onAction={(tool, action) => void runCliAction(tool, action)}
-                compact
               />
               </>
               )}
@@ -2559,6 +2742,29 @@ function App() {
         </div>
       )}
 
+      {settingsOpen && (
+        <SettingsDialog
+          language={language}
+          theme={theme}
+          status={cliStatus}
+          onSetLanguage={setLanguage}
+          onSetTheme={(t) => setTheme(t)}
+          onAction={(tool, action) => void runCliAction(tool, action)}
+          onInstall={installCliAsync}
+          onLogin={loginCliAsync}
+          onRefresh={() => void refresh()}
+          onClose={() => setSettingsOpen(false)}
+          onResetWizard={() => { localStorage.removeItem("orkestra.setupDone"); setSetupDone(false); setSettingsOpen(false); }}
+        />
+      )}
+      {loginModal && (
+        <LoginModal
+          tool={loginModal.tool}
+          language={language}
+          onClose={() => setLoginModal(null)}
+          onAuthenticated={() => void refresh()}
+        />
+      )}
       {notice && <div className="toast">{notice}</div>}
       {textPrompt && (
         <TextPromptModal
@@ -2601,6 +2807,333 @@ function CopyButton({ value, label, copiedLabel }: { value: string; label: strin
     <button className={`copyBtn${copied ? " copied" : ""}`} onClick={copy} title={copied ? copiedLabel : label}>
       {copied ? <CheckCircle2 size={13} /> : <Copy size={13} />}
     </button>
+  );
+}
+
+// İlk açılış kurulum sihirbazı: dil/tema → paket kurulumu → giriş+test → yetkilendirme → bitti.
+function SetupWizard({
+  language, theme, status, onSetLanguage, onSetTheme, onAction, onInstall, onLogin, onRefresh, onFinish
+}: {
+  language: Language;
+  theme: "light" | "dark";
+  status: CliStatusResponse | null;
+  onSetLanguage: (l: Language) => void;
+  onSetTheme: (t: "light" | "dark") => void;
+  onAction: (tool: CliToolStatus, action: "login" | "logout" | "test" | "install") => void;
+  onInstall: (tool: CliToolStatus) => Promise<{ success: boolean; message: string }>;
+  onLogin: (tool: CliToolStatus) => Promise<void>;
+  onRefresh: () => void;
+  onFinish: () => void;
+}) {
+  const text = uiText[language];
+  const [step, setStep] = useState(0);
+  const [authorized, setAuthorized] = useState(false);
+  const [installing, setInstalling] = useState<Set<string>>(new Set());
+  const [loggingIn, setLoggingIn] = useState<Set<string>>(new Set());
+  const [installWarn, setInstallWarn] = useState(false);
+  const login = async (tool: CliToolStatus) => {
+    setLoggingIn((s) => new Set(s).add(tool.id));
+    await onLogin(tool);
+    setLoggingIn((s) => { const n = new Set(s); n.delete(tool.id); return n; });
+  };
+  const tools = status?.tools ?? [];
+  const anyReady = tools.some((t) => t.installed && t.authenticated);
+  const notInstalled = tools.filter((t) => !t.installed);
+  const steps = [text.stepLangTheme, text.stepInstall, text.stepAuth, text.stepAuthorize, text.stepDone];
+
+  const install = async (tool: CliToolStatus) => {
+    setInstalling((s) => new Set(s).add(tool.id));
+    setInstallWarn(false);
+    await onInstall(tool);
+    setInstalling((s) => { const n = new Set(s); n.delete(tool.id); return n; });
+  };
+  // PARALEL kur: claude/codex 5sn'de biter, agy (uzun indirme) arkada devam eder.
+  const installAll = async () => {
+    await Promise.all(tools.filter((x) => !x.installed).map((t) => install(t)));
+  };
+  // İleri (kurulum adımı): EN AZ BİR CLI kurulu yeterli. Hiçbiri kurulu değilse engelle;
+  // en az biri kuruluysa (agy hâlâ kuruluyor olsa bile) geç.
+  const installedCount = tools.filter((t) => t.installed).length;
+  const nextFromInstall = () => {
+    if (installedCount === 0) { setInstallWarn(true); return; }
+    setStep((s) => s + 1);
+  };
+
+  const StatusBadge = ({ ok, okLabel, noLabel }: { ok: boolean; okLabel: string; noLabel: string }) => (
+    <span className={`wizardBadge ${ok ? "ok" : "no"}`}>
+      {ok ? <CheckCircle2 size={13} /> : <AlertTriangle size={13} />} {ok ? okLabel : noLabel}
+    </span>
+  );
+
+  return (
+    <div className="wizardOverlay">
+      <div className="wizardCard">
+        <div className="wizardHeader">
+          <img src="/logo.png" alt="Orkestra" className="wizardLogo" />
+          <div className="wizardHeaderText">
+            <strong>{text.setupTitle}</strong>
+            <span>{steps[step]}</span>
+          </div>
+        </div>
+        <div className="wizardSteps">
+          {steps.map((_, i) => (
+            <span key={i} className={`wizardDot${i === step ? " on" : ""}${i < step ? " done" : ""}`} />
+          ))}
+        </div>
+
+        <div className="wizardBody">
+          {step === 0 && (
+            <div className="wizardPane">
+              <p className="wizardLead">{text.setupWelcome}</p>
+              <div className="wizardField">
+                <label>{text.language}</label>
+                <div className="languageSwitch">
+                  <button className={language === "en" ? "active" : ""} onClick={() => onSetLanguage("en")}>EN</button>
+                  <button className={language === "tr" ? "active" : ""} onClick={() => onSetLanguage("tr")}>TR</button>
+                </div>
+              </div>
+              <div className="wizardField">
+                <label>{text.theme}</label>
+                <div className="wizardThemeToggle">
+                  <button className={theme === "light" ? "active" : ""} onClick={() => onSetTheme("light")}><Sun size={15} /> {text.lightMode}</button>
+                  <button className={theme === "dark" ? "active" : ""} onClick={() => onSetTheme("dark")}><Moon size={15} /> {text.darkMode}</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {step === 1 && (
+            <div className="wizardPane">
+              <p className="wizardLead">{text.installLead}</p>
+              {tools.map((t) => {
+                const busy = installing.has(t.id);
+                return (
+                  <div className="wizardCliRow" key={t.id}>
+                    <div className="wizardCliName">
+                      <span className={`agentIcon ${t.id}`}>{iconForTool(t.id)}</span>
+                      <strong>{displayToolName(t.id)}</strong>
+                    </div>
+                    {busy ? (
+                      <span className="wizardBadge installing"><span className="liveSpinner" /> {text.installingNow}</span>
+                    ) : (
+                      <StatusBadge ok={t.installed} okLabel={text.installed} noLabel={text.notInstalled} />
+                    )}
+                    <button className="ghostButton" disabled={busy} onClick={() => void install(t)}>
+                      <Play size={13} /> {t.installed ? text.reinstall : text.install}
+                    </button>
+                  </div>
+                );
+              })}
+              {installWarn && installedCount === 0 && (
+                <p className="wizardWarn">
+                  <AlertTriangle size={14} /> {text.installNeedOne}
+                </p>
+              )}
+              <p className="wizardHint">{text.installHintHeadless}</p>
+            </div>
+          )}
+
+          {step === 2 && (
+            <div className="wizardPane">
+              <p className="wizardLead">{text.authLead}</p>
+              {tools.map((t) => {
+                const waiting = loggingIn.has(t.id);
+                return (
+                  <div className="wizardCliRow" key={t.id}>
+                    <div className="wizardCliName">
+                      <span className={`agentIcon ${t.id}`}>{iconForTool(t.id)}</span>
+                      <strong>{displayToolName(t.id)}</strong>
+                    </div>
+                    {waiting ? (
+                      <span className="wizardBadge installing"><span className="liveSpinner" /> {text.waitingLogin}</span>
+                    ) : (
+                      <StatusBadge ok={t.authenticated} okLabel={text.authorizedOk} noLabel={text.notAuthorized} />
+                    )}
+                    <div className="wizardCliActions">
+                      <button className="ghostButton" disabled={!t.installed || waiting} onClick={() => void login(t)}><LogIn size={13} /> {text.login}</button>
+                      <button className="ghostButton" disabled={!t.installed || waiting} onClick={() => onAction(t, "test")}>{text.test}</button>
+                    </div>
+                  </div>
+                );
+              })}
+              <p className="wizardHint">{text.authHintLive}</p>
+            </div>
+          )}
+
+          {step === 3 && (
+            <div className="wizardPane">
+              <p className="wizardLead">{text.authorizeTitle}</p>
+              <p className="wizardDesc">{text.authorizeDesc}</p>
+              <ul className="wizardAuthList">
+                <li><CheckCircle2 size={14} /> {text.authorizeItem1}</li>
+                <li><CheckCircle2 size={14} /> {text.authorizeItem2}</li>
+                <li><CheckCircle2 size={14} /> {text.authorizeItem3}</li>
+              </ul>
+              <label className="wizardCheck">
+                <input type="checkbox" checked={authorized} onChange={(e) => setAuthorized(e.target.checked)} />
+                {text.authorizeConfirm}
+              </label>
+            </div>
+          )}
+
+          {step === 4 && (
+            <div className="wizardPane wizardDonePane">
+              <CheckCircle2 size={42} className="wizardDoneIcon" />
+              <p className="wizardLead">{text.setupDoneTitle}</p>
+              <div className="wizardSummary">
+                {tools.map((t) => (
+                  <div className="wizardCliRow" key={t.id}>
+                    <div className="wizardCliName">
+                      <span className={`agentIcon ${t.id}`}>{iconForTool(t.id)}</span>
+                      <strong>{displayToolName(t.id)}</strong>
+                    </div>
+                    <StatusBadge ok={t.installed && t.authenticated} okLabel={text.ready} noLabel={text.notReady} />
+                  </div>
+                ))}
+              </div>
+              {!anyReady && <p className="wizardWarn"><AlertTriangle size={14} /> {text.needOneCli}</p>}
+            </div>
+          )}
+        </div>
+
+        <div className="wizardFooter">
+          {step > 0 ? <button className="ghostButton" onClick={() => setStep((s) => s - 1)}>{text.back}</button> : <span />}
+          <button className="ghostButton wizardRefresh" onClick={onRefresh}><RefreshCw size={13} /> {text.refresh}</button>
+          {step < 4 ? (
+            <button className="primaryButton" disabled={step === 3 && !authorized} onClick={() => (step === 1 ? nextFromInstall() : setStep((s) => s + 1))}>{text.next}</button>
+          ) : (
+            <button className="primaryButton" disabled={!anyReady} onClick={onFinish}>{text.startApp}</button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Ayarlar dialog'u: tercih değişikliği + CLI yönetimi + sihirbazı sıfırla.
+function SettingsDialog({
+  language, theme, status, onSetLanguage, onSetTheme, onAction, onInstall, onLogin, onRefresh, onClose, onResetWizard
+}: {
+  language: Language;
+  theme: "light" | "dark";
+  status: CliStatusResponse | null;
+  onSetLanguage: (l: Language) => void;
+  onSetTheme: (t: "light" | "dark") => void;
+  onAction: (tool: CliToolStatus, action: "login" | "logout" | "test" | "install") => void;
+  onInstall: (tool: CliToolStatus) => Promise<{ success: boolean; message: string }>;
+  onLogin: (tool: CliToolStatus) => Promise<void>;
+  onRefresh: () => void;
+  onClose: () => void;
+  onResetWizard: () => void;
+}) {
+  const text = uiText[language];
+  const tools = status?.tools ?? [];
+  const [installing, setInstalling] = useState<Set<string>>(new Set());
+  const [loggingIn, setLoggingIn] = useState<Set<string>>(new Set());
+  const install = async (tool: CliToolStatus) => {
+    setInstalling((s) => new Set(s).add(tool.id));
+    await onInstall(tool);
+    setInstalling((s) => { const n = new Set(s); n.delete(tool.id); return n; });
+  };
+  const login = async (tool: CliToolStatus) => {
+    setLoggingIn((s) => new Set(s).add(tool.id));
+    await onLogin(tool);
+    setLoggingIn((s) => { const n = new Set(s); n.delete(tool.id); return n; });
+  };
+  return (
+    <div className="settingsOverlay" onMouseDown={onClose}>
+      <div className="settingsDialog glassPanel" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="settingsHeader">
+          <div className="panelTitle"><Settings2 size={18} /><span>{text.settings}</span></div>
+          <button className="iconButton" onClick={onClose} title={text.close}><X size={16} /></button>
+        </div>
+        <div className="settingsBody">
+          <div className="settingsRow">
+            <label>{text.language}</label>
+            <div className="languageSwitch">
+              <button className={language === "en" ? "active" : ""} onClick={() => onSetLanguage("en")}>EN</button>
+              <button className={language === "tr" ? "active" : ""} onClick={() => onSetLanguage("tr")}>TR</button>
+            </div>
+          </div>
+          <div className="settingsRow">
+            <label>{text.theme}</label>
+            <div className="wizardThemeToggle">
+              <button className={theme === "light" ? "active" : ""} onClick={() => onSetTheme("light")}><Sun size={15} /> {text.lightMode}</button>
+              <button className={theme === "dark" ? "active" : ""} onClick={() => onSetTheme("dark")}><Moon size={15} /> {text.darkMode}</button>
+            </div>
+          </div>
+
+          <div className="settingsSection">
+            <div className="settingsSectionHead">
+              <span>{text.cliSection}</span>
+              <button className="iconButton" onClick={onRefresh} title={text.refresh}><RefreshCw size={14} /></button>
+            </div>
+            {tools.map((t) => (
+              <div className="wizardCliRow" key={t.id}>
+                <div className="wizardCliName">
+                  <span className={`agentIcon ${t.id}`}>{iconForTool(t.id)}</span>
+                  <strong>{displayToolName(t.id)}</strong>
+                </div>
+                {installing.has(t.id) ? (
+                  <span className="wizardBadge installing"><span className="liveSpinner" /> {text.installingNow}</span>
+                ) : loggingIn.has(t.id) ? (
+                  <span className="wizardBadge installing"><span className="liveSpinner" /> {text.waitingLogin}</span>
+                ) : (
+                  <span className={`wizardBadge ${t.installed && t.authenticated ? "ok" : "no"}`}>
+                    {t.installed && t.authenticated ? <CheckCircle2 size={13} /> : <AlertTriangle size={13} />}
+                    {t.installed ? (t.authenticated ? text.ready : text.notAuthorized) : text.notInstalled}
+                  </span>
+                )}
+                <div className="wizardCliActions">
+                  {!t.installed && <button className="ghostButton" disabled={installing.has(t.id)} onClick={() => void install(t)}>{text.install}</button>}
+                  {t.installed && !t.authenticated && <button className="ghostButton" disabled={loggingIn.has(t.id)} onClick={() => void login(t)}><LogIn size={13} /> {text.login}</button>}
+                  {t.installed && <button className="ghostButton" onClick={() => onAction(t, "test")}>{text.test}</button>}
+                  {t.installed && t.authenticated && <button className="ghostButton danger" onClick={() => onAction(t, "logout")}><LogOut size={13} /> {text.logout}</button>}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="settingsSection">
+            <div className="settingsSectionHead">
+              <span>{text.limitsTitle}</span>
+              <button className="iconButton" onClick={onRefresh} title={text.refresh}><RefreshCw size={14} /></button>
+            </div>
+            {tools.filter((t) => t.usage?.windows?.length).length === 0 ? (
+              <p className="limitPopupEmpty">{text.readingCli}</p>
+            ) : (
+              tools.filter((t) => t.usage?.windows?.length).map((t) => (
+                <div className="limitPopupRow" key={t.id}>
+                  <div className="limitPopupName">
+                    <span className={`agentIcon ${t.id}`}>{iconForTool(t.id)}</span>
+                    <strong>{displayToolName(t.id)}</strong>
+                  </div>
+                  {t.usage!.windows.map((w) => (
+                    <div className="limitMini" key={w.label}>
+                      <div className="limitMiniHead"><span>{w.label}</span><span>%{w.usedPercent}</span></div>
+                      <div className="limitMiniTrack">
+                        <div
+                          className={`limitMiniFill${w.usedPercent >= 90 ? " danger" : w.usedPercent >= 60 ? " warn" : ""}`}
+                          style={{ width: `${w.usedPercent}%` }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ))
+            )}
+          </div>
+
+          <div className="settingsDanger">
+            <div>
+              <strong>{text.resetSetup}</strong>
+              <p>{text.resetSetupDesc}</p>
+            </div>
+            <button className="ghostButton danger" onClick={onResetWizard}><RotateCcw size={14} /> {text.resetSetup}</button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -4094,10 +4627,113 @@ function iconForTool(id: CliToolStatus["id"]) {
   return <Sparkles size={17} />;
 }
 
+// CLI login'i GERÇEK terminal penceresinde yapılır (native — onboarding/ToS/kod orada
+// sorunsuz çalışır). Dialog görsel adım adım rehber sunar ve giriş tamamlanınca otomatik algılar.
+function LoginModal({
+  tool, language, onClose, onAuthenticated
+}: {
+  tool: CliToolStatus;
+  language: Language;
+  onClose: () => void;
+  onAuthenticated: () => void;
+}) {
+  const text = uiText[language];
+  const [authed, setAuthed] = useState(false);
+  const [opened, setOpened] = useState(false);
+  const [opening, setOpening] = useState(false);
+  const openedRef = useRef(false);
+  useEffect(() => { openedRef.current = opened; }, [opened]);
+
+  // Giriş tamamlandı mı diye yokla. agy: trust folder yazılınca TAM bitti say (REPL'e gelindi)
+  // → pencereyi otomatik kapat. Diğerleri: cli-status authenticated yeter.
+  useEffect(() => {
+    let alive = true;
+    const tick = async () => {
+      let done = false;
+      if (tool.id === "antigravity") {
+        if (openedRef.current) {
+          const r = await api.get<{ done: boolean }>(`/api/cli/${tool.id}/login-window/poll`).catch(() => null);
+          done = Boolean(r?.done);
+        }
+      } else {
+        const status = await api.get<CliStatusResponse>("/api/cli-status").catch(() => null);
+        done = Boolean(status?.tools.find((x) => x.id === tool.id)?.authenticated);
+      }
+      if (!alive) return;
+      if (done) {
+        if (openedRef.current) void api.post(`/api/cli/${tool.id}/login-window/close`).catch(() => {}); // pencereyi kapat
+        setAuthed(true);
+        onAuthenticated();
+        setTimeout(() => { if (alive) onClose(); }, 1600);
+        return;
+      }
+      if (alive) setTimeout(() => void tick(), 2000);
+    };
+    setTimeout(() => void tick(), 2000);
+    return () => { alive = false; };
+  }, [tool.id]);
+
+  // Görünür terminal penceresini aç ve login'i orada başlat.
+  const openWindow = async () => {
+    setOpening(true);
+    try { await api.post(`/api/cli/${tool.id}/login-window`); setOpened(true); }
+    catch { /* yok say */ }
+    setOpening(false);
+  };
+
+  return (
+    <div className="settingsOverlay loginOverlay" onMouseDown={onClose}>
+      <div className="loginModal glassPanel" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="settingsHeader">
+          <div className="panelTitle"><LogIn size={18} /><span>{displayToolName(tool.id)} — {text.login}</span></div>
+          <button className="iconButton" onClick={onClose}><X size={18} /></button>
+        </div>
+        {authed ? (
+          <div className="loginSuccess"><CheckCircle2 size={40} /><p>{text.loginDone}</p></div>
+        ) : (
+          <div className="loginBody">
+            <p className="loginIntro">{text.loginWindowIntro}</p>
+            {/* Açılan pencerede sırayla yapılacaklar — adımlar CLI'ya göre değişir.
+                agy: yöntem+kod+renk+ToS+trust; claude/codex: sadece tarayıcı girişi. */}
+            <ol className="loginSteps">
+              {(tool.id === "antigravity"
+                ? [
+                    { t: text.guideMethodTitle, b: text.guideMethod },
+                    { t: text.guideDeviceTitle, b: text.guideDevice },
+                    { t: text.guideColorTitle, b: text.guideColor },
+                    { t: text.guideTosTitle, b: text.guideTos },
+                    { t: text.guideTrustTitle, b: text.guideTrust }
+                  ]
+                : [
+                    { t: text.guideSimpleBrowserTitle, b: text.guideSimpleBrowser },
+                    { t: text.guideSimpleDoneTitle, b: text.guideSimpleDone }
+                  ]
+              ).map((s, i) => (
+                <li key={i}><span className="loginStepNo">{i + 1}</span><div><strong>{s.t}</strong><p>{s.b}</p></div></li>
+              ))}
+            </ol>
+            {!opened ? (
+              <button className="primaryButton loginOpenBtn" disabled={opening} onClick={() => void openWindow()}>
+                <SquareTerminal size={16} /> {opening ? text.opening : text.openLoginWindow}
+              </button>
+            ) : (
+              <div className="loginWaiting">
+                <span className="liveSpinner" /> <span>{text.loginWindowOpened}</span>
+                <button className="ghostButton" onClick={() => void openWindow()}><RefreshCw size={13} /> {text.reopenWindow}</button>
+              </div>
+            )}
+            <p className="wizardHint">{text.loginAutoDetect}</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function displayToolName(id: CliToolStatus["id"]) {
   if (id === "claude") return "Claude Code";
   if (id === "codex") return "OpenAI Codex";
-  return "Gemini CLI";
+  return "Antigravity CLI";
 }
 
 function statusText(tool: CliToolStatus, language: Language) {
@@ -4745,10 +5381,11 @@ const CollapsibleTerminalLine = ({ event }: { event: RunEvent }) => {
   );
 };
 
-function actionLabel(action: "login" | "logout" | "test", language: Language) {
+function actionLabel(action: "login" | "logout" | "test" | "install", language: Language) {
   const text = uiText[language];
   if (action === "login") return text.login.toLowerCase();
   if (action === "logout") return text.logout.toLowerCase();
+  if (action === "install") return text.install.toLowerCase();
   return text.test.toLowerCase();
 }
 

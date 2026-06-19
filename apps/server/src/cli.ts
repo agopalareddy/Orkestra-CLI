@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { promisify } from "node:util";
 import type { ChatMessage, CliToolStatus, EffortLevel } from "../../../packages/shared/types";
 import { getModelOptions, getUsageFor } from "./usage";
+import { ensureAgyTrusted } from "./runner";
 
 const exec = promisify(execFile);
 const plannerTimeoutMs = 60_000;
@@ -380,13 +381,78 @@ function clearClaudeEnvironmentAuth() {
   }
 }
 
+// Kurulum komutu: PENCERESIZ (headless) çalışır, çıktısı yakalanır.
+function installSpec(id: PlannerId): { command: string; args: string[]; label: string } {
+  if (process.platform === "win32") {
+    if (id === "claude") return { command: "cmd.exe", args: ["/d", "/s", "/c", "npm install -g @anthropic-ai/claude-code"], label: "npm i -g @anthropic-ai/claude-code" };
+    if (id === "codex") return { command: "cmd.exe", args: ["/d", "/s", "/c", "npm install -g @openai/codex"], label: "npm i -g @openai/codex" };
+    // antigravity (agy) — doğru komut: PowerShell irm | iex
+    return {
+      command: "powershell.exe",
+      args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm https://antigravity.google/cli/install.ps1 | iex"],
+      label: "irm https://antigravity.google/cli/install.ps1 | iex"
+    };
+  }
+  if (id === "claude") return { command: "sh", args: ["-lc", "npm install -g @anthropic-ai/claude-code"], label: "npm i -g @anthropic-ai/claude-code" };
+  if (id === "codex") return { command: "sh", args: ["-lc", "npm install -g @openai/codex"], label: "npm i -g @openai/codex" };
+  return { command: "sh", args: ["-lc", "curl -fsSL https://antigravity.google/cli/install.sh | bash"], label: "curl antigravity install.sh" };
+}
+
+function runHidden(command: string, args: string[], timeoutMs: number): Promise<{ code: number; output: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    let out = "";
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new Error("Kurulum zaman aşımına uğradı (timeout)."));
+    }, timeoutMs);
+    child.stdout?.on("data", (d) => { out += d.toString(); if (out.length > 200_000) out = out.slice(-100_000); });
+    child.stderr?.on("data", (d) => { out += d.toString(); if (out.length > 200_000) out = out.slice(-100_000); });
+    child.on("error", (err) => { clearTimeout(timer); reject(err); });
+    child.on("close", (code) => { clearTimeout(timer); resolve({ code: code ?? -1, output: out }); });
+  });
+}
+
+// Kurulumu bekleyerek yapar; bitince installed durumunu döndürür (anlık geri bildirim).
+export async function installCli(id: PlannerId) {
+  const spec = installSpec(id);
+  try {
+    const { output } = await runHidden(spec.command, spec.args, 8 * 60_000);
+    const status = await statusFor(id).catch(() => null);
+    const success = Boolean(status?.installed);
+    return {
+      ok: true,
+      success,
+      command: spec.label,
+      message: success ? `${label(id)} kuruldu.` : `${label(id)} kurulamadı.`,
+      error: success ? undefined : output.trim().slice(-600)
+    };
+  } catch (error) {
+    return {
+      ok: true,
+      success: false,
+      command: spec.label,
+      message: `${label(id)} kurulamadı.`,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
+// Kullanıcı yeniden giriş başlattığında önceki "Çıkış" (logout) bastırmasını kaldır.
+// (Login artık /login-window üzerinden gittiği için startLoginCli çağrılmıyor; bu ayrıca lazım.)
+export function clearLoginOverride(id: PlannerId) {
+  loggedOutOverrides.delete(id);
+  if (id === "claude") clearClaudeEnvironmentAuth();
+}
+
 export function startLoginCli(id: PlannerId) {
   loggedOutOverrides.delete(id);
   if (id === "claude") clearClaudeEnvironmentAuth();
   const command = loginCommand(id);
   if (process.platform === "win32") {
     if (id === "antigravity") {
-      spawn("powershell.exe", ["-NoExit", "-Command", "agy login"], {
+      // `start ""` ile YENİ GÖRÜNÜR PowerShell penceresi aç (doğrudan spawn pencere açmıyordu).
+      spawn("cmd.exe", ["/d", "/c", "start", "", "powershell.exe", "-NoExit", "-Command", "agy login"], {
         detached: true,
         stdio: "ignore",
         windowsHide: false
@@ -418,22 +484,30 @@ function agyExecutablePath() {
   return existsSync(agyExe) ? agyExe : undefined;
 }
 
+// Sadece auth durumunu loglardan okur (kurulu tespiti ayrı: agyInstalledByFile).
 function getAgyLogStatus() {
-  const agyStateDir = join(process.env.USERPROFILE ?? "", ".gemini", "antigravity-cli");
-  const logPath = join(agyStateDir, "cli.log");
-  const installed = existsSync(agyStateDir) || Boolean(agyExecutablePath());
-  if (!existsSync(logPath)) return { installed, authenticated: false };
+  const logPath = join(process.env.USERPROFILE ?? "", ".gemini", "antigravity-cli", "cli.log");
+  if (!existsSync(logPath)) return { authenticated: false };
   try {
     const log = readFileSync(logPath, "utf8");
-    const authenticated = /OAuth:\s+authenticated successfully|authenticated via keyring|Auth done received/i.test(log);
-    const loggedOut = /You are not logged into Antigravity/i.test(log);
-    return {
-      installed,
-      authenticated: authenticated && !loggedOut ? true : authenticated
-    };
+    // Auth başarı işareti. NOT: login sırasında token alınmadan önce log'a geçici
+    // "You are not logged into Antigravity" handshake HATALARI düşüyor — bunlar logout
+    // DEĞİL, o yüzden sayılmaz. UI üzerinden logout'u zaten loggedOutOverrides tutuyor.
+    const authenticated = /OAuth:\s+authenticated successfully|authenticated via keyring|Auth done received|silent auth succeeded/i.test(log);
+    return { authenticated };
   } catch {
-    return { installed, authenticated: false };
+    return { authenticated: false };
   }
+}
+
+// agy GERÇEKTEN kurulu mu? Bilinen dosya konumlarına bakar (PATH fallback değil).
+function agyInstalledByFile(): boolean {
+  if (agyExecutablePath()) return true;
+  const agyBin = join(process.env.USERPROFILE ?? "", "AppData", "Local", "agy", "bin");
+  if (existsSync(agyBin)) return true;
+  const npmDir = join(process.env.APPDATA ?? join(process.env.USERPROFILE ?? "", "AppData", "Roaming"), "npm");
+  if (existsSync(join(npmDir, "agy.cmd")) || existsSync(join(npmDir, "agy.exe"))) return true;
+  return false;
 }
 
 // Tüm agy transcript.jsonl dosyalarını mtime'larıyla listeler.
@@ -507,6 +581,7 @@ function neutralAgyCwd() {
   const dir = join(tmpdir(), "orkestra-agy-neutral");
   try {
     mkdirSync(dir, { recursive: true });
+    ensureAgyTrusted(dir); // nötr dizini de güvenilir yap (trust prompt'u atla)
     neutralCwdCache = dir;
     return dir;
   } catch {
@@ -969,82 +1044,40 @@ async function getCodexStatus(): Promise<CliToolStatus> {
 }
 
 async function getAntigravityStatus(): Promise<CliToolStatus> {
-  const agyLogStatus = getAgyLogStatus();
-  if (agyLogStatus.authenticated || agyLogStatus.installed) {
+  // KURULU tespiti yalnızca gerçek agy dosya konumlarına dayanır. agy yoksa resolveTool
+  // `cmd /c agy`'ye düşüyor; cmd başarıyla çalıştığı için "not recognized" hatası SADECE
+  // çıktıda kalıyordu ve eskiden yanlışlıkla installed:true dönüyordu. Artık dosya yoksa
+  // kurulu değildir.
+  const installed = agyInstalledByFile();
+  if (!installed) {
     return {
       id: "antigravity",
-      name: "Antigravity / Gemini CLI",
-      installed: agyLogStatus.installed,
-      authenticated: !loggedOutOverrides.has("antigravity") && agyLogStatus.authenticated,
+      name: "Antigravity CLI",
+      installed: false,
+      authenticated: false,
       quotaOk: true,
       responding: false,
       models: modelsFor("antigravity"),
       limits: defaultLimitPatterns(),
-      lastError: agyLogStatus.authenticated ? undefined : "Giris gerekli.",
-      hint: agyLogStatus.authenticated
-        ? "Antigravity OAuth oturumu logdan dogrulandi."
-        : "Antigravity CLI kurulu; agy login gerekli."
+      lastError: "Kurulu değil."
     };
   }
-  try {
-    const output = await runTool("agy", ["login", "status"], "", statusTimeoutMs).catch(async () =>
-      runTool("agy", ["auth", "status"], "", statusTimeoutMs)
-    );
-    const authenticated = !loggedOutOverrides.has("antigravity") && !isAuthError(output);
-    return {
-      id: "antigravity",
-      name: "Antigravity / Gemini CLI",
-      installed: true,
-      authenticated,
-      quotaOk: !isQuotaError(output),
-      responding: false,
-      models: modelsFor("antigravity"),
-      limits: defaultLimitPatterns(),
-      lastError: authenticated ? undefined : "Giris gerekli.",
-      hint: "Antigravity terminalindeki agy login oturumu kullanilir."
-    };
-  } catch {
-    try {
-    const output = await runTool("gemini", ["--version"], "", statusTimeoutMs);
-    const geminiDir = join(process.env.USERPROFILE ?? "", ".gemini");
-    const hasOAuth = existsSync(join(geminiDir, "oauth_creds.json"));
-    const hasAccounts = existsSync(join(geminiDir, "google_accounts.json"));
-    const hasApiKey = Boolean(process.env.GEMINI_API_KEY);
-    const authenticated = !loggedOutOverrides.has("antigravity") && hasApiKey;
-    return {
-      id: "antigravity",
-      name: "Gemini CLI",
-      installed: true,
-      authenticated,
-      quotaOk: !isQuotaError(output),
-      responding: false,
-      models: modelsFor("antigravity"),
-      limits: defaultLimitPatterns(),
-      lastError: authenticated
-        ? undefined
-        : hasOAuth || hasAccounts
-          ? "Gemini oturum dosyasi var ama headless sohbet icin GEMINI_API_KEY gerekli."
-          : "Giris gerekli.",
-      hint: "Gemini CLI Claude oturumundan bagimsizdir; headless sohbet icin GEMINI_API_KEY ister."
-    };
-  } catch (error) {
-    return statusError("antigravity", "Gemini CLI", error);
-  }
-
-  const claude = await getClaudeStatus();
-  const authenticated = !loggedOutOverrides.has("antigravity") && claude.authenticated;
+  const agyLogStatus = getAgyLogStatus();
+  const authenticated = !loggedOutOverrides.has("antigravity") && agyLogStatus.authenticated;
   return {
-    ...claude,
     id: "antigravity",
-    name: "Antigravity Gemini CLI",
+    name: "Antigravity CLI",
+    installed: true,
     authenticated,
-    models: ["antigravity/gemini-3-flash-agent", "antigravity/gemini-3.1-pro-high"],
+    quotaOk: true,
+    responding: false,
+    models: modelsFor("antigravity"),
     limits: defaultLimitPatterns(),
     lastError: authenticated ? undefined : "Giriş gerekli.",
-    hint: "Claude CLI üzerinden antigravity/gemini-3-flash-agent modeliyle çalışır."
+    hint: authenticated
+      ? "Antigravity OAuth oturumu logdan doğrulandı."
+      : "Antigravity CLI kurulu; agy login gerekli."
   };
-}
-
 }
 
 function statusError(id: PlannerId, name: string, error: unknown): CliToolStatus {
@@ -1322,14 +1355,14 @@ function isAuthError(text: string) {
 function label(id: string) {
   if (id === "claude") return "Claude";
   if (id === "codex") return "Codex";
-  if (id === "antigravity") return "Gemini";
+  if (id === "antigravity") return "Antigravity";
   return id;
 }
 
 function modelLabel(id: string) {
   if (id === "claude") return "Claude Code";
   if (id === "codex") return "OpenAI Codex";
-  if (id === "antigravity") return "Gemini CLI";
+  if (id === "antigravity") return "Antigravity CLI";
   return "Yerel fallback";
 }
 

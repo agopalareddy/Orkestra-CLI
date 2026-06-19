@@ -15,7 +15,9 @@ import {
   detectPipelineIntent,
   generateBrief,
   generatePlan,
+  clearLoginOverride,
   getCliStatuses,
+  installCli,
   logoutCli,
   runDebate,
   runPlannerChat,
@@ -42,6 +44,7 @@ type TerminalSession = {
   name: string;
   cwd: string;
   buffer: string;
+  rawBuffer: string; // ANSI'li ham çıktı (xterm gömülü terminal için)
   process: pty.IPty;
   createdAt: string;
   updatedAt: string;
@@ -231,9 +234,177 @@ app.get("/api/cli-status", async () => ({
   checkedAt: new Date().toISOString()
 }));
 
-app.post<{ Params: { agent: "claude" | "codex" | "antigravity" } }>("/api/cli/:agent/login", async (request) => {
-  return startLoginCli(request.params.agent);
+// CLI bin dizinlerini PATH'e ekleyen pty env'i (agy/npm sistem PATH'inde olmayabilir).
+function cliPtyEnv(): Record<string, string> {
+  const env: Record<string, string> = { ...process.env } as Record<string, string>;
+  if (process.platform === "win32") {
+    const home = process.env.USERPROFILE ?? "";
+    const agyBin = join(home, "AppData", "Local", "agy", "bin");
+    const npmDir = join(process.env.APPDATA ?? join(home, "AppData", "Roaming"), "npm");
+    env.PATH = [agyBin, npmDir, env.PATH ?? env.Path].filter(Boolean).join(";");
+  }
+  return env;
+}
+
+// Komutu YAKALANAN bir pty'de (gerçek pseudo-konsol) çalıştırır; çıktısı buffer'a yazılır.
+// agy'nin "irm | iex" kurulum scripti headless stdout'a yazamıyordu; pty bunu çözer.
+function spawnCapturedPty(name: string, command: string, rows = 30): string {
+  const id = randomUUID();
+  const proc = pty.spawn("powershell.exe", ["-NoLogo", "-Command", command], {
+    name: "xterm-color", cols: 120, rows, cwd: process.cwd(), env: cliPtyEnv()
+  });
+  const session: TerminalSession = {
+    id, shell: "powershell", name, cwd: process.cwd(),
+    buffer: "", rawBuffer: "", process: proc, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
+  };
+  proc.onData((data) => {
+    session.buffer += stripAnsi(data);
+    if (session.buffer.length > maxTerminalBuffer) session.buffer = session.buffer.slice(session.buffer.length - maxTerminalBuffer);
+    session.rawBuffer += data;
+    if (session.rawBuffer.length > maxTerminalBuffer) session.rawBuffer = session.rawBuffer.slice(session.rawBuffer.length - maxTerminalBuffer);
+    session.updatedAt = new Date().toISOString();
+  });
+  proc.onExit(() => { session.updatedAt = new Date().toISOString(); });
+  terminalSessions.set(id, session);
+  return id;
+}
+
+app.post<{ Params: { agent: "claude" | "codex" | "antigravity" } }>("/api/cli/:agent/install", async (request) => {
+  const agent = request.params.agent;
+  const cmd =
+    agent === "claude" ? "npm install -g @anthropic-ai/claude-code"
+    : agent === "codex" ? "npm install -g @openai/codex"
+    : "irm https://antigravity.google/cli/install.ps1 | iex"; // agy
+  // Non-blocking: pty'de başlat, hemen dön. Frontend durumu yoklayıp "kuruldu"yu yakalar.
+  const id = spawnCapturedPty(`${agent} install`, cmd);
+  return { ok: true, terminalId: id, message: `${agent} kurulumu başladı (tamamlanınca otomatik algılanır).` };
 });
+
+app.post<{ Params: { agent: "claude" | "codex" | "antigravity" } }>("/api/cli/:agent/login", async (request) => {
+  const agent = request.params.agent;
+  const loginCmd = agent === "claude" ? "claude auth login" : agent === "codex" ? "codex login" : "agy login";
+  // Login pty'sini UZUN spawn et: agy onboarding'i [Previous]/[Done] butonlarını ancak yeterli
+  // satır olunca render ediyor; kısa pty'de butonlar çizilmiyor ve navigasyon takılıyordu.
+  const id = spawnCapturedPty(`${agent} login`, loginCmd, agent === "antigravity" ? 48 : 30);
+  // Not: Onboarding'i kullanıcı klavyeyle yapar (odak renkle gösterildiği için güvenilir
+  // oto-tespit yok). Arayüz her adımda ne yapılacağını tarif eder.
+  return { ok: true, terminalId: id, message: `${agent} login başlatıldı (giriş tamamlanınca otomatik algılanır).` };
+});
+
+// Login penceresinin PID dosyası + başlangıç bilgisi (otomatik kapatma için).
+let loginWinPidFile = "";
+let loginWinStart = 0;
+let loginWinLogSize = 0; // login başlarkenki cli.log boyutu — YENİ satırları ayırt etmek için
+
+function agyCliLogPath() {
+  return join(process.env.USERPROFILE ?? "", ".gemini", "antigravity-cli", "cli.log");
+}
+
+// agy login TAM bitti mi? REPL'e gelince cli.log'a "Auth done received / silent auth succeeded /
+// Experiments refreshed after login" yazılır. Login başlangıcından SONRA eklenen log kısmında
+// bu işaret çıkarsa tamamlanmıştır (eski/önceki login satırlarına takılmaz).
+function agyLoginCompleted(): boolean {
+  try {
+    if (!loginWinStart) return false; // aktif login yok
+    const file = agyCliLogPath();
+    if (!existsSync(file)) return false;
+    const log = readFileSync(file, "utf8");
+    const fresh = log.length >= loginWinLogSize ? log.slice(loginWinLogSize) : log; // truncate olduysa hepsi
+    return /Auth done received|silent auth succeeded|Experiments refreshed after login|OAuth:\s+authenticated successfully/i.test(fresh);
+  } catch {
+    return false;
+  }
+}
+
+// GÖRÜNÜR gerçek terminal penceresi açar ve login'i orada başlatır (native, %100 çalışır).
+// Kullanıcı onboarding + tarayıcı + kod yapıştırmayı bu pencerede yapar; dialog görsel rehber sunar.
+app.post<{ Params: { agent: "claude" | "codex" | "antigravity" } }>("/api/cli/:agent/login-window", async (request) => {
+  const agent = request.params.agent;
+  clearLoginOverride(agent); // önceki "Çıkış" bastırmasını kaldır → giriş algılanabilsin
+  const loginCmd = agent === "claude" ? "claude auth login" : agent === "codex" ? "codex login" : "agy login";
+  if (process.platform === "win32") {
+    const home = process.env.USERPROFILE ?? "";
+    const agyBin = join(home, "AppData", "Local", "agy", "bin");
+    const npmDir = join(process.env.APPDATA ?? join(home, "AppData", "Roaming"), "npm");
+    // Pencere powershell'inin PID'sini dosyaya yaz (sonradan otomatik kapatmak için).
+    loginWinPidFile = join(process.env.TEMP ?? home, `orkestra-${agent}-login.pid`);
+    loginWinStart = Date.now();
+    // Login başlarkenki cli.log boyutu (YENI auth-done satırını bundan sonra ararız).
+    loginWinLogSize = existsSync(agyCliLogPath()) ? statSync(agyCliLogPath()).size : 0;
+    const psCmd =
+      `Set-Content -LiteralPath '${loginWinPidFile}' -Value $PID -Encoding ascii; ` +
+      `$env:PATH='${agyBin};${npmDir};' + $env:PATH; ${loginCmd}`;
+    spawn("cmd.exe", ["/d", "/c", "start", `${agent} login`, "powershell.exe", "-NoProfile", "-Command", psCmd], {
+      detached: true, stdio: "ignore", windowsHide: false
+    }).unref();
+  } else {
+    spawn("sh", ["-lc", loginCmd], { detached: true, stdio: "ignore" }).unref();
+  }
+  return { ok: true, message: `${agent} login penceresi açıldı.` };
+});
+
+// Login penceresindeki süreç TAMAMLANDI mı? (agy: trust folder yazıldı mı)
+app.get<{ Params: { agent: string } }>("/api/cli/:agent/login-window/poll", async (request) => {
+  if (request.params.agent === "antigravity") return { done: agyLoginCompleted() };
+  return { done: false };
+});
+
+// Login penceresini (powershell + agy ağacı) öldür → pencere kapanır.
+app.post("/api/cli/:agent/login-window/close", async () => {
+  try {
+    if (loginWinPidFile && existsSync(loginWinPidFile)) {
+      const pid = readFileSync(loginWinPidFile, "utf8").trim();
+      if (/^\d+$/.test(pid)) {
+        spawn("taskkill", ["/PID", pid, "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+      }
+    }
+  } catch {
+    // yok say
+  }
+  return { ok: true };
+});
+
+// agy login onboarding'ini ODAK İŞARETİNİ izleyerek otomatik geçer:
+//  - "Choose your color scheme" → Enter (varsayılan şema)
+//  - "Terms of Service" → "> Done" odakta olana dek aşağı in, sonra Enter (varsayılan onay kutusu zaten [x])
+//  - device-code/oauth URL'i çıkınca bırak (kullanıcı tarayıcı+kodu devralır)
+function autoDriveAgyOnboarding(terminalId: string) {
+  const session = terminalSessions.get(terminalId);
+  if (!session) return;
+  let acc = "";
+  let phase: "color" | "tos" | "done" = "color";
+  let last = 0;
+  let tosTries = 0;
+  const write = (d: string) => { try { session.process.write(d); } catch { /* yok say */ } };
+  const driver = session.process.onData((chunk) => {
+    acc = (acc + stripAnsi(chunk)).slice(-3000);
+    if (/Paste this code|accounts\.google\.com\/o\/oauth2|oauth2\/auth\?/i.test(acc)) {
+      try { driver.dispose(); } catch { /* yok say */ }
+      return;
+    }
+    const now = Date.now();
+    if (now - last < 450) return; // debounce
+    if (phase === "color" && /Choose your color scheme/i.test(acc)) {
+      last = now; phase = "tos"; acc = "";
+      setTimeout(() => write("\r"), 500); // varsayılan şemayı seç
+      return;
+    }
+    if (phase === "tos" && /Terms of Service|I agree to help improve/i.test(acc)) {
+      // Sadece SON kareyi incele (odak işareti "> Done" yalnız Done seçiliyken çıkar;
+      // seçili değilken "[Done]" görünür). Onay kutusuna asla Space/Enter göndermeyiz.
+      const frame = acc.slice(acc.lastIndexOf("Data Use"));
+      if (/>\s*Done/.test(frame)) {
+        last = now; phase = "done";
+        setTimeout(() => write("\r"), 250); // Done odakta → onayla (varsayılan [x] korunur)
+      } else if (tosTries < 8) {
+        last = now; tosTries++;
+        write("\x1b[B"); // aşağı: onay kutusu → Previous → Done (↑/↓ Navigate)
+      }
+    }
+  });
+  // Güvenlik: 90sn sonra sürücüyü bırak.
+  setTimeout(() => { try { driver.dispose(); } catch { /* yok say */ } }, 90_000);
+}
 
 app.post<{ Params: { agent: "claude" | "codex" | "antigravity" } }>("/api/cli/:agent/logout", async (request) => {
   return logoutCli(request.params.agent);
@@ -548,6 +719,7 @@ app.post<{ Body: { shell?: TerminalShell; cwd?: string } }>("/api/terminals", as
     name: shell === "cmd" ? "cmd" : "PowerShell",
     cwd,
     buffer: "",
+    rawBuffer: "",
     process: proc,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
@@ -558,6 +730,10 @@ app.post<{ Body: { shell?: TerminalShell; cwd?: string } }>("/api/terminals", as
     if (session.buffer.length > maxTerminalBuffer) {
       session.buffer = session.buffer.slice(session.buffer.length - maxTerminalBuffer);
     }
+    session.rawBuffer += data;
+    if (session.rawBuffer.length > maxTerminalBuffer) {
+      session.rawBuffer = session.rawBuffer.slice(session.rawBuffer.length - maxTerminalBuffer);
+    }
     session.updatedAt = new Date().toISOString();
   });
   proc.onExit(() => {
@@ -567,14 +743,16 @@ app.post<{ Body: { shell?: TerminalShell; cwd?: string } }>("/api/terminals", as
   return reply.code(201).send(terminalInfo(session));
 });
 
-app.get<{ Params: { id: string }; Querystring: { offset?: string } }>("/api/terminals/:id/output", async (request, reply) => {
+app.get<{ Params: { id: string }; Querystring: { offset?: string; raw?: string } }>("/api/terminals/:id/output", async (request, reply) => {
   const session = terminalSessions.get(request.params.id);
   if (!session) return reply.code(404).send({ error: "Terminal not found" });
   const offset = Math.max(0, Number(request.query.offset || 0));
+  // raw=1 → ANSI'li ham çıktı (xterm gömülü terminal için). Aksi halde temiz metin.
+  const source = request.query.raw === "1" ? session.rawBuffer : session.buffer;
   return {
     id: session.id,
-    output: session.buffer.slice(offset),
-    cursor: session.buffer.length,
+    output: source.slice(offset),
+    cursor: source.length,
     updatedAt: session.updatedAt
   };
 });

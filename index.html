@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Basit HTML Sitesi</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: Arial, Helvetica, sans-serif;
+        color: #222;
+        background: #f6f8fb;
+        line-height: 1.6;
+      }
+
+      header {
+        background: #1f6feb;
+        color: white;
+        padding: 56px 20px;
+        text-align: center;
+      }
+
+      header h1 {
+        margin: 0 0 10px;
+        font-size: clamp(32px, 6vw, 56px);
+      }
+
+      header p {
+        margin: 0;
+        font-size: 18px;
+      }
+
+      main {
+        width: min(960px, calc(100% - 32px));
+        margin: 32px auto;
+      }
+
+      section {
+        background: white;
+        border: 1px solid #dce3ec;
+        border-radius: 8px;
+        margin-bottom: 20px;
+        padding: 24px;
+      }
+
+      h2 {
+        margin-top: 0;
+        color: #173b6c;
+      }
+
+      .features {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 16px;
+      }
+
+      .feature {
+        border-left: 4px solid #1f6feb;
+        background: #f8fbff;
+        padding: 16px;
+      }
+
+      .button {
+        display: inline-block;
+        margin-top: 8px;
+        padding: 12px 18px;
+        border-radius: 6px;
+        background: #1f6feb;
+        color: white;
+        text-decoration: none;
+        font-weight: bold;
+      }
+
+      footer {
+        padding: 24px 20px;
+        text-align: center;
+        color: #667085;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Merhaba Dünya</h1>
+      <p>Bu sade, hızlı ve mobil uyumlu bir HTML sitesidir.</p>
+    </header>
+
+    <main>
+      <section>
+        <h2>Hakkında</h2>
+        <p>
+          Bu sayfa tek bir HTML dosyasından oluşur. İçinde temel stil kuralları,
+          tanıtım alanı, içerik bölümleri ve iletişim bağlantısı bulunur.
+        </p>
+        <a class="button" href="mailto:info@example.com">İletişime Geç</a>
+      </section>
+
+      <section>
+        <h2>Özellikler</h2>
+        <div class="features">
+          <div class="feature">
+            <h3>Basit</h3>
+            <p>Ek kurulum gerektirmez, doğrudan tarayıcıda açılır.</p>
+          </div>
+          <div class="feature">
+            <h3>Uyumlu</h3>
+            <p>Telefon, tablet ve masaüstünde düzgün görünür.</p>
+          </div>
+          <div class="feature">
+            <h3>Düzenlenebilir</h3>
+            <p>Metinleri ve renkleri kolayca değiştirebilirsiniz.</p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      &copy; 2026 Basit HTML Sitesi
+    </footer>
+  </body>
+</html>

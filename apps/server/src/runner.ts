@@ -6,6 +6,29 @@ import { interpolateArgs } from "./template";
 import type { Store } from "./db";
 import type { EventHub } from "./events";
 
+// agy çalışmadan ÖNCE workspace'i settings.json'daki trustedWorkspaces'e ekler →
+// agy "Do you trust this folder?" sormadan headless çalışır (interaktif onay gerekmez).
+export function ensureAgyTrusted(workspacePath: string) {
+  try {
+    const dir = join(process.env.USERPROFILE ?? "", ".gemini", "antigravity-cli");
+    const file = join(dir, "settings.json");
+    mkdirSync(dir, { recursive: true });
+    let settings: Record<string, unknown> = {};
+    if (existsSync(file)) {
+      try { settings = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>; } catch { settings = {}; }
+    }
+    const list = Array.isArray(settings.trustedWorkspaces) ? (settings.trustedWorkspaces as string[]) : [];
+    const norm = workspacePath.replace(/\//g, "\\");
+    if (!list.some((p) => p.toLowerCase() === norm.toLowerCase())) {
+      list.push(norm);
+      settings.trustedWorkspaces = list;
+      writeFileSync(file, JSON.stringify(settings, null, 2), "utf8");
+    }
+  } catch {
+    // sessizce geç — trust yazılamazsa agy yine interaktif sorar
+  }
+}
+
 const flowRoles = ["planner", "builder", "reviewer", "fixer"] as const;
 const ignoredSnapshotDirs = new Set(["node_modules", ".git", "dist", ".next", ".cache", "__pycache__", ".turbo"]);
 type FileSnapshot = Map<string, { size: number; mtimeMs: number; content?: string }>;
@@ -405,6 +428,8 @@ export class Runner {
 
     return new Promise<string>((resolve, reject) => {
       mkdirSync(cwd, { recursive: true });
+      // agy ajanı: workspace'i önce güvenilir yap (trust prompt'unu atla).
+      if (agent.command === "agy") ensureAgyTrusted(cwd);
       let lastSnapshot = snapshotWorkspace(cwd);
       const reportFileChanges = () => {
         const nextSnapshot = snapshotWorkspace(cwd);
