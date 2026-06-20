@@ -379,6 +379,10 @@ const uiText = {
     noProjectYet: "No project (new)",
     newProject: "New project",
     newProjectTitle: "Start a fresh project (resets workspace)",
+    openExistingProject: "Open an existing folder as a project",
+    addProject: "Add project",
+    createNewProject: "Create new project",
+    openExistingShort: "Open existing folder",
     newSessionTitle: "New session in this project",
     moreActions: "More",
     deleteProject: "Delete project",
@@ -734,6 +738,10 @@ const uiText = {
     noProjectYet: "Proje yok (yeni)",
     newProject: "Yeni Proje",
     newProjectTitle: "Sıfırdan yeni proje (workspace sıfırlanır)",
+    openExistingProject: "Mevcut bir klasörü proje olarak aç",
+    addProject: "Proje ekle",
+    createNewProject: "Yeni proje oluştur",
+    openExistingShort: "Mevcut klasör aç",
     newSessionTitle: "Bu projede yeni oturum",
     moreActions: "Daha fazla",
     deleteProject: "Projeyi sil",
@@ -1779,6 +1787,34 @@ function App() {
       setPhasePending(null);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  // Mevcut bir PC klasörünü proje olarak aç (native klasör dialog'u) ve ona geç.
+  async function openExistingProject() {
+    try {
+      const res = await api.post<{ workspacePath?: string; name?: string; cancelled?: boolean }>("/api/projects/open", {});
+      if (res.cancelled || !res.workspacePath) return;
+      const existing = projects.find((p) => p.workspacePath === res.workspacePath);
+      if (existing) { switchProject(existing.id); return; }
+      const proj: Project = { id: crypto.randomUUID(), name: res.name || "proje", workspacePath: res.workspacePath, createdAt: new Date().toISOString() };
+      setProjects((cur) => {
+        const next = [proj, ...cur];
+        persistProjects(next);
+        return next;
+      });
+      setActiveProjectId(proj.id);
+      setProjectWorkspace(proj.workspacePath);
+      setActiveRun(null);
+      setEvents([]);
+      setCodeMessages([welcomeMessageFor(language)]);
+      setCodeConvoId(crypto.randomUUID());
+      setCodingActive(false);
+      setCodeDebateDone(false);
+      setLastAnalysis(null);
+      setPhasePending(null);
+    } catch (error) {
+      console.error("[Orkestra] Klasör açılamadı:", error);
     }
   }
 
@@ -3144,6 +3180,7 @@ function App() {
                 activeSessionId={codeConvoId}
                 onSwitch={switchProject}
                 onCreate={() => void createProject()}
+                onOpenExisting={() => void openExistingProject()}
                 onRename={(id) => void renameProject(id)}
                 onDelete={deleteProject}
                 onNewSession={newSessionInProject}
@@ -4861,6 +4898,7 @@ function ProjectPanel({
   activeSessionId,
   onSwitch,
   onCreate,
+  onOpenExisting,
   onRename,
   onDelete,
   onNewSession,
@@ -4874,6 +4912,7 @@ function ProjectPanel({
   activeSessionId: string;
   onSwitch: (id: string) => void;
   onCreate: () => void;
+  onOpenExisting?: () => void;
   onRename: (id: string) => void;
   onDelete: (id: string) => void;
   onNewSession: (projectId: string) => void;
@@ -4885,6 +4924,14 @@ function ProjectPanel({
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(activeProjectId ? [activeProjectId] : []));
   // ChatGPT tarzı ⋯ menüsü: hangi projenin menüsü açık.
   const [menuFor, setMenuFor] = useState<string | null>(null);
+  // "+" → yeni proje / mevcut klasör aç seçim menüsü.
+  const [newMenu, setNewMenu] = useState(false);
+  useEffect(() => {
+    if (!newMenu) return;
+    const close = () => setNewMenu(false);
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [newMenu]);
   // Dışarı tıklayınca menüyü kapat.
   useEffect(() => {
     if (!menuFor) return;
@@ -4913,9 +4960,23 @@ function ProjectPanel({
           <Folder size={16} />
           {text.projects}
         </span>
-        <button className="iconButton" onClick={onCreate} title={text.newProjectTitle}>
-          <Plus size={14} />
-        </button>
+        <span className="projectHeadActions">
+          <button className="iconButton" onClick={(e) => { e.stopPropagation(); setNewMenu((o) => !o); }} title={text.addProject}>
+            <Plus size={14} />
+          </button>
+          {newMenu && (
+            <div className="rowMenu projectNewMenu" onMouseDown={(e) => e.stopPropagation()}>
+              <button onClick={() => { setNewMenu(false); onCreate(); }}>
+                <Plus size={13} /> {text.createNewProject}
+              </button>
+              {onOpenExisting && (
+                <button onClick={() => { setNewMenu(false); onOpenExisting(); }}>
+                  <FolderOpen size={13} /> {text.openExistingShort}
+                </button>
+              )}
+            </div>
+          )}
+        </span>
       </div>
       <div className="panelSearch">
         <Search size={13} />

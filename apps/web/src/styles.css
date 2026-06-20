@@ -5497,3 +5497,7 @@ textarea:focus {
 .composerTopRow { display:flex; align-items:center; gap:10px; justify-content:space-between; }
 .transferToCodeBtn { display:inline-flex; align-items:center; gap:6px; padding:6px 13px; border-radius:9px; border:1px solid rgba(34,197,94,0.4); background:rgba(34,197,94,0.12); color:#34d399; font-size:0.78rem; font-weight:700; cursor:pointer; white-space:nowrap; flex-shrink:0; transition:background .15s,border-color .15s; }
 .transferToCodeBtn:hover { background:rgba(34,197,94,0.22); border-color:rgba(34,197,94,0.7); }
+
+/* Projeler basligi: mevcut klasor ac + yeni proje butonlari */
+.projectHeadActions { display:inline-flex; align-items:center; gap:4px; position:relative; }
+.projectNewMenu { position:absolute; top:calc(100% + 4px); right:0; z-index:50; min-width:190px; }

@@ -504,12 +504,12 @@ app.post<{ Body: CreateRunRequest }>("/api/runs", async (request, reply) => {
 
   // Sürekli proje: workspacePath verilmişse aynı projede devam et (güvenlik için
   // mutlaka workspaceDir altında olmalı). Yoksa yeni bir run klasörü oluştur.
-  const workspaceRoot = resolve(config.workspaceDir);
   let workspacePath = join(config.workspaceDir, `run-${id}`);
   const requested = request.body.workspacePath?.trim();
   if (requested) {
     const resolved = resolve(requested);
-    if (resolved === workspaceRoot || resolved.startsWith(`${workspaceRoot}/`) || resolved.startsWith(`${workspaceRoot}\\`)) {
+    // workspaceDir altında VEYA kullanıcının açtığı dış proje kökü → o klasörde devam et.
+    if (underWorkspaceOrOpened(resolved)) {
       workspacePath = resolved;
     }
   }
@@ -593,6 +593,51 @@ app.post<{ Body: { name?: string } }>("/api/projects/create", async (request, re
   return { workspacePath: resolve(dir), name: name || base };
 });
 
+// Mevcut bir klasörü proje olarak aç: native klasör seçme dialog'u açar, seçilen yolu
+// "açılan kök" olarak kaydeder (dosya/run/aç izinleri ona da verilir) ve döndürür.
+app.post("/api/projects/open", async (_request, reply) => {
+  if (process.platform !== "win32") {
+    return reply.code(400).send({ error: "Klasör seçici şu an yalnızca Windows'ta destekleniyor." });
+  }
+  const script = [
+    "Add-Type -AssemblyName System.Windows.Forms | Out-Null",
+    "Add-Type -AssemblyName System.Drawing | Out-Null",
+    "$owner = New-Object System.Windows.Forms.Form",
+    "$owner.TopMost = $true",
+    "$owner.ShowInTaskbar = $false",
+    "$owner.StartPosition = 'CenterScreen'",
+    "$owner.Size = New-Object System.Drawing.Size(1,1)",
+    "$owner.Opacity = 0",
+    "$owner.Show() | Out-Null",
+    "$owner.Activate()",
+    "$f = New-Object System.Windows.Forms.FolderBrowserDialog",
+    "$f.Description = 'Orkestra: proje klasorunu sec'",
+    "$f.ShowNewFolderButton = $true",
+    "$res = $f.ShowDialog($owner)",
+    "$owner.Close()",
+    "if ($res -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Out.Write($f.SelectedPath) }"
+  ].join("\n");
+  const { out: selected, err } = await new Promise<{ out: string; err: string }>((res) => {
+    const ps = spawn("powershell", ["-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-Command", script], { windowsHide: true });
+    let out = "";
+    let errBuf = "";
+    ps.stdout?.on("data", (d) => (out += d.toString()));
+    ps.stderr?.on("data", (d) => (errBuf += d.toString()));
+    ps.on("close", () => res({ out: out.trim(), err: errBuf.trim() }));
+    ps.on("error", (e) => res({ out: "", err: e.message }));
+  });
+  if (err) app.log.warn(`projects/open dialog: ${err}`);
+  if (!selected) return reply.send({ cancelled: true });
+  const resolved = resolve(selected);
+  if (!existsSync(resolved) || !statSync(resolved).isDirectory()) {
+    return reply.code(400).send({ error: "Geçerli bir klasör seçilmedi." });
+  }
+  openedRoots.add(resolved);
+  saveOpenedRoots();
+  const name = resolved.split(/[\\/]/).filter(Boolean).pop() || "proje";
+  return reply.send({ workspacePath: resolved, name });
+});
+
 // Proje klasörünü yeniden adlandırır (gerçek dizini taşır). Yeni mutlak yolu döndürür.
 app.post<{ Body: { path?: string; newName?: string } }>("/api/projects/rename", async (request, reply) => {
   const current = request.body.path?.trim();
@@ -631,10 +676,9 @@ app.post<{ Body: { path?: string; newName?: string } }>("/api/projects/rename", 
 app.post<{ Body: { path?: string } }>("/api/open-folder", async (request, reply) => {
   const requested = request.body.path?.trim();
   if (!requested) return reply.code(400).send({ error: "Path is required" });
-  const workspaceRoot = resolve(config.workspaceDir);
   const resolved = resolve(requested);
-  // Güvenlik: yalnızca workspace altındaki klasörler açılabilir.
-  if (resolved !== workspaceRoot && !resolved.startsWith(`${workspaceRoot}/`) && !resolved.startsWith(`${workspaceRoot}\\`)) {
+  // Güvenlik: workspace altındaki VEYA kullanıcının açtığı dış proje klasörleri.
+  if (!underWorkspaceOrOpened(resolved)) {
     return reply.code(403).send({ error: "Forbidden" });
   }
   if (!existsSync(resolved)) return reply.code(404).send({ error: "Folder not found" });
@@ -656,10 +700,9 @@ app.post<{ Body: { path?: string } }>("/api/open-folder", async (request, reply)
 app.post<{ Body: { path?: string } }>("/api/open-in-vscode", async (request, reply) => {
   const requested = request.body.path?.trim();
   if (!requested) return reply.code(400).send({ error: "Path is required" });
-  const workspaceRoot = resolve(config.workspaceDir);
   const resolved = resolve(requested);
-  // Güvenlik: yalnızca workspace altındaki yollar açılabilir.
-  if (resolved !== workspaceRoot && !resolved.startsWith(`${workspaceRoot}/`) && !resolved.startsWith(`${workspaceRoot}\\`)) {
+  // Güvenlik: workspace altındaki VEYA kullanıcının açtığı dış proje yolları.
+  if (!underWorkspaceOrOpened(resolved)) {
     return reply.code(403).send({ error: "Forbidden" });
   }
   if (!existsSync(resolved)) return reply.code(404).send({ error: "Path not found" });
@@ -728,10 +771,30 @@ app.post<{ Body: { title: string; body: string } }>("/api/git/pr", async (reques
 // ----- File Explorer API -----
 const ignoredDirs = new Set(["node_modules", ".git", "dist", ".next", ".cache", "__pycache__", ".turbo"]);
 const allowedRoots = [resolve(process.cwd()), resolve(config.workspaceDir)];
+// Kullanıcının "Mevcut klasör aç" ile açtığı dış proje kökleri (workspace dışındaki gerçek projeler).
+// Diske kalıcı: server yeniden başlayınca izinler korunur.
+const openedRoots = new Set<string>();
+const openedRootsFile = join(config.dataDir, "opened-roots.json");
+function loadOpenedRoots() {
+  try {
+    const arr = JSON.parse(readFileSync(openedRootsFile, "utf8"));
+    if (Array.isArray(arr)) for (const p of arr) if (typeof p === "string") openedRoots.add(resolve(p));
+  } catch { /* yoksa boş başla */ }
+}
+function saveOpenedRoots() {
+  try { writeFileSync(openedRootsFile, JSON.stringify([...openedRoots]), "utf8"); } catch { /* yoksay */ }
+}
+loadOpenedRoots();
 
 function isPathAllowed(target: string) {
   const resolved = resolve(target);
-  return allowedRoots.some((root) => resolved.startsWith(root));
+  return allowedRoots.some((root) => resolved.startsWith(root)) || [...openedRoots].some((root) => resolved.startsWith(root));
+}
+
+// workspaceDir VEYA açılan dış köklerden biri altında mı? (run/dosya/aç izinleri için)
+function underWorkspaceOrOpened(resolved: string): boolean {
+  const roots = [resolve(config.workspaceDir), ...openedRoots];
+  return roots.some((root) => resolved === root || resolved.startsWith(`${root}/`) || resolved.startsWith(`${root}\\`));
 }
 
 app.get<{ Querystring: { path?: string } }>("/api/files", async (request, reply) => {
