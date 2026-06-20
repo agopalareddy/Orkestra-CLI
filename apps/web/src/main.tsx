@@ -1021,6 +1021,15 @@ function exportAsWord(md: string) {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
+// Kullanıcı mesajı bir belge/dosya çıktısı mı istiyor? (Word/PDF indir butonunu öne çıkarmak için.)
+function docExportIntent(msg: string): { word: boolean; pdf: boolean } {
+  const m = (msg || "").toLocaleLowerCase("tr");
+  if (!/(ver|indir|oluştur|hazırla|kaydet|olarak|yap)/.test(m)) return { word: false, pdf: false };
+  const word = /(word|docx?|belge|doküman|dosya)/.test(m);
+  const pdf = /\bpdf\b/.test(m);
+  return { word, pdf };
+}
+
 type StoredConversation = { id: string; title: string; messages: ChatMessage[]; updatedAt: string; workspacePath?: string | null; projectId?: string | null; codingActive?: boolean; phasePendingRunId?: string | null; lastRunId?: string | null };
 // Proje: kalıcı bir kod tabanı/klasör. Her projenin kendi oturum (konuşma) geçmişi olur.
 type Project = { id: string; name: string; workspacePath: string; createdAt: string };
@@ -3918,12 +3927,35 @@ function ChatPanel({
     <section className="chatPanel glassPanel">
 
       <div className="chatMessages" ref={scrollRef}>
-        {messages.map((message) => (
+        {messages.map((message, i) => {
+          // Bu asistan cevabı bir belge isteğine mi yanıt? → öne çıkan indir bar'ı göster.
+          const prevUser = message.role === "assistant"
+            ? [...messages.slice(0, i)].reverse().find((m) => m.role === "user")
+            : undefined;
+          const intent = prevUser ? docExportIntent(prevUser.content) : { word: false, pdf: false };
+          const showDocBar = message.role === "assistant" && message.content.trim().length > 40 && (intent.word || intent.pdf);
+          return (
           <article key={message.id ?? `${message.role}-${message.createdAt}`} className={`chatBubble ${message.role} compact`}>
             {message.role === "assistant" && (
               <div className="messageMeta">
                 <Bot size={14} />
                 <span>{message.modelLabel ?? "Orkestra"}</span>
+              </div>
+            )}
+            {showDocBar && (
+              <div className="docArtifactBar">
+                <FileText size={15} />
+                <span className="docArtifactTitle">{docTitle(message.content)}</span>
+                {(intent.word || (!intent.word && !intent.pdf)) && (
+                  <button className="docArtifactDl" onClick={() => exportAsWord(message.content)}>
+                    <Download size={13} /> {text.exportWord}
+                  </button>
+                )}
+                {intent.pdf && (
+                  <button className="docArtifactDl" onClick={() => exportAsPdf(message.content)}>
+                    <Download size={13} /> {text.exportPdf}
+                  </button>
+                )}
               </div>
             )}
             <pre>{message.content}</pre>
