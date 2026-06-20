@@ -3,8 +3,10 @@ import { createRoot } from "react-dom/client";
 import {
   AlertTriangle,
   ArrowUp,
+  Bell,
   Bot,
   Code2,
+  Download,
   GitCompare,
   FileText,
   CheckCircle2,
@@ -389,6 +391,23 @@ const uiText = {
     previewInstalling: "Installing dependencies… (first run may take a while)",
     previewStarting: "Starting the dev server…",
     previewError: "Couldn't start the preview. Check the terminal/logs.",
+    notifChatDoneTitle: "Response ready",
+    notifPhaseTitle: "Phase done — needs your approval",
+    notifActionTitle: "Analysis ready — how should we proceed?",
+    notifActionBody: "Start the team or have the operator build it.",
+    notifCodeDoneTitle: "Coding finished ✅",
+    notifCodeDoneBody: "The agents completed the task.",
+    notifErrorTitle: "An error occurred ⚠️",
+    notifActOperator: "Operator build",
+    notifActTeamStart: "Team: Start",
+    notifActTeamReview: "Review plan",
+    notifEnableTitle: "Enable notifications",
+    notifEnableDesc: "Get notified when responses finish, a phase needs approval, coding completes, or an error occurs.",
+    notifEnableBtn: "Enable",
+    notifEnableLater: "Not now",
+    exportPdf: "Download as PDF",
+    exportWord: "Download as Word",
+    download: "Download",
     preview: "Preview",
     openInBrowser: "Open in browser",
     refreshPreview: "Refresh",
@@ -418,6 +437,7 @@ const uiText = {
     debateDoneHint: "Debate finished. How should we proceed?",
     operatorAnalyzingLabel: "Operator is analyzing…",
     phaseDoneHint: "Phase complete — review and continue?",
+    pausedHint: "Paused — resume where you left off?",
     phaseContinue: "Continue to next phase",
     codingModeHint: "Coding mode — your message is an instruction to the agents (continue from where they left off), not a debate.",
     backToDebate: "Back to debate",
@@ -719,6 +739,23 @@ const uiText = {
     previewInstalling: "Bağımlılıklar kuruluyor… (ilk seferde biraz sürebilir)",
     previewStarting: "Dev sunucusu başlatılıyor…",
     previewError: "Önizleme başlatılamadı. Terminal/loglara bakın.",
+    notifChatDoneTitle: "Cevap hazır",
+    notifPhaseTitle: "Faz tamamlandı — onayın gerekiyor",
+    notifActionTitle: "Analiz hazır — nasıl ilerleyelim?",
+    notifActionBody: "Ekibi başlat ya da operatöre yaptır.",
+    notifCodeDoneTitle: "Kodlama tamamlandı ✅",
+    notifCodeDoneBody: "Ajanlar görevi tamamladı.",
+    notifErrorTitle: "Bir hata oluştu ⚠️",
+    notifActOperator: "Operatöre yaptır",
+    notifActTeamStart: "Ekip: Başlat",
+    notifActTeamReview: "Planı incele",
+    notifEnableTitle: "Bildirimleri aç",
+    notifEnableDesc: "Cevaplar bitince, faz onay bekleyince, kodlama tamamlanınca veya hata olunca haberin olsun.",
+    notifEnableBtn: "İzin ver",
+    notifEnableLater: "Şimdi değil",
+    exportPdf: "PDF olarak indir",
+    exportWord: "Word olarak indir",
+    download: "İndir",
     preview: "Önizleme",
     openInBrowser: "Tarayıcıda aç",
     refreshPreview: "Yenile",
@@ -748,6 +785,7 @@ const uiText = {
     debateDoneHint: "Tartışma bitti. Nasıl ilerleyelim?",
     operatorAnalyzingLabel: "Operatör analiz ediyor…",
     phaseDoneHint: "Faz tamamlandı — inceleyip devam edelim mi?",
+    pausedHint: "Duraklatıldı — kaldığın yerden devam et?",
     phaseContinue: "Sıradaki faza devam et",
     codingModeHint: "Kodlama modu — mesajın ajana TALİMAT olur (kaldığı yerden devam), tartışma açmaz.",
     backToDebate: "Tartışmaya dön",
@@ -865,6 +903,123 @@ const api = {
     return response.json() as Promise<T>;
   }
 };
+
+// ─────────── Bildirimler (OS / Service Worker) ───────────
+let swRegistration: ServiceWorkerRegistration | null = null;
+type NotifyAction = { action: string; title: string };
+type NotifyData = { kind?: string; view?: "chat" | "code"; convoId?: string | null; runId?: string | null };
+
+const notificationsSupported = typeof window !== "undefined" && "Notification" in window;
+
+function notificationPermission(): NotificationPermission {
+  return notificationsSupported ? Notification.permission : "denied";
+}
+
+async function requestNotificationPermission(): Promise<NotificationPermission> {
+  if (!notificationsSupported) return "denied";
+  try {
+    return await Notification.requestPermission();
+  } catch {
+    return Notification.permission;
+  }
+}
+
+// OS bildirimi gösterir. Pencere ODAKTAYSA gösterme (kullanıcı zaten ekranı görüyor).
+// Aksiyon butonları yalnızca Service Worker üzerinden çalışır; yoksa butonsuz gösterilir.
+async function showNotify(opts: { title: string; body: string; tag?: string; data?: NotifyData; actions?: NotifyAction[] }) {
+  if (notificationPermission() !== "granted") return;
+  if (typeof document !== "undefined" && document.hasFocus()) return;
+  const options: NotificationOptions & { actions?: NotifyAction[] } = {
+    body: opts.body,
+    tag: opts.tag,
+    data: opts.data,
+    icon: "/logo.png",
+    badge: "/logo.png"
+  };
+  try {
+    if (swRegistration) {
+      if (opts.actions) options.actions = opts.actions;
+      await swRegistration.showNotification(opts.title, options);
+    } else {
+      new Notification(opts.title, options);
+    }
+  } catch {
+    try { new Notification(opts.title, options); } catch { /* yoksay */ }
+  }
+}
+
+// ─────────── Belge dışa aktarma (istemci tarafı, sıfır bağımlılık) ───────────
+// Basit markdown→HTML (başlık, liste, kod, kalın/italik, link). Dışa aktarma için yeterli.
+function mdToHtml(md: string): string {
+  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const inline = (s: string) =>
+    esc(s)
+      .replace(/`([^`]+)`/g, "<code>$1</code>")
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>")
+      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+  const out: string[] = [];
+  let inCode = false;
+  let code: string[] = [];
+  let list: "ul" | "ol" | null = null;
+  let para: string[] = [];
+  const flushP = () => { if (para.length) { out.push(`<p>${inline(para.join(" "))}</p>`); para = []; } };
+  const flushL = () => { if (list) { out.push(`</${list}>`); list = null; } };
+  for (const line of md.replace(/\r\n/g, "\n").split("\n")) {
+    if (/^```/.test(line)) {
+      if (inCode) { out.push(`<pre><code>${esc(code.join("\n"))}</code></pre>`); code = []; inCode = false; }
+      else { flushP(); flushL(); inCode = true; }
+      continue;
+    }
+    if (inCode) { code.push(line); continue; }
+    const h = line.match(/^(#{1,4})\s+(.*)$/);
+    if (h) { flushP(); flushL(); out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`); continue; }
+    const ul = line.match(/^\s*[-*]\s+(.*)$/);
+    const ol = line.match(/^\s*\d+\.\s+(.*)$/);
+    if (ul || ol) {
+      flushP();
+      const t = ul ? "ul" : "ol";
+      if (list !== t) { flushL(); out.push(`<${t}>`); list = t; }
+      out.push(`<li>${inline(ul ? ul[1] : ol![1])}</li>`);
+      continue;
+    }
+    if (!line.trim()) { flushP(); flushL(); continue; }
+    para.push(line);
+  }
+  if (inCode) out.push(`<pre><code>${esc(code.join("\n"))}</code></pre>`);
+  flushP(); flushL();
+  return out.join("\n");
+}
+
+const DOC_CSS =
+  "body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;line-height:1.6;color:#1a1a1a;max-width:820px;margin:28px auto;padding:0 28px;}h1,h2,h3,h4{line-height:1.25;margin:1.2em 0 .5em;}code{background:#f3f4f6;padding:1px 5px;border-radius:4px;font-family:Consolas,monospace;font-size:.92em;}pre{background:#f6f8fa;padding:12px 14px;border-radius:8px;overflow:auto;}pre code{background:none;padding:0;}a{color:#2563eb;}ul,ol{padding-left:22px;}blockquote{border-left:3px solid #d1d5db;margin:0;padding-left:14px;color:#555;}";
+
+// Belge başlığı: ilk başlık ya da ilk anlamlı satır.
+function docTitle(md: string): string {
+  const first = md.split("\n").map((l) => l.replace(/^#+\s*/, "").trim()).find((l) => l.length > 0) ?? "belge";
+  return first.replace(/[*`_]/g, "").slice(0, 60);
+}
+
+// PDF: stilli HTML'i yeni pencerede açıp yazdır → kullanıcı "PDF olarak kaydet".
+function exportAsPdf(md: string) {
+  const win = window.open("", "_blank", "width=840,height=920");
+  if (!win) return;
+  win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${docTitle(md)}</title><style>${DOC_CSS}</style></head><body>${mdToHtml(md)}</body></html>`);
+  win.document.close();
+  win.focus();
+  setTimeout(() => win.print(), 400);
+}
+
+// Word: HTML tabanlı .doc indir (Word açar, düzenlenebilir).
+function exportAsWord(md: string) {
+  const html = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><style>${DOC_CSS}</style></head><body>${mdToHtml(md)}</body></html>`;
+  const blob = new Blob(["﻿", html], { type: "application/msword" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `${docTitle(md).replace(/[^\w.-]+/g, "_") || "belge"}.doc`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
 
 type StoredConversation = { id: string; title: string; messages: ChatMessage[]; updatedAt: string; workspacePath?: string | null; projectId?: string | null; codingActive?: boolean; phasePendingRunId?: string | null; lastRunId?: string | null };
 // Proje: kalıcı bir kod tabanı/klasör. Her projenin kendi oturum (konuşma) geçmişi olur.
@@ -991,6 +1146,51 @@ function App() {
   const setConversations = isCodeView ? setCodeConvos : setChatConvos;
   const conversationId = isCodeView ? codeConvoId : chatConvoId;
   const setConversationId = isCodeView ? setCodeConvoId : setChatConvoId;
+
+  // ── Bildirim izni + Service Worker + aksiyon dağıtıcı ──
+  const [notifPerm, setNotifPerm] = useState<NotificationPermission>(notificationPermission());
+  const notifActionRef = useRef<(action: string, data: NotifyData) => void>(() => {});
+  notifActionRef.current = (action, data) => {
+    // Faz onayı: girdi gerektirmez → doğrudan resume + canlı bağlan.
+    if (action === "phase-continue" && data.runId) {
+      const rid = data.runId;
+      void api.post(`/api/runs/${rid}/resume`).then(() => { void reconnectRun(rid); }).catch(() => {});
+      return;
+    }
+    if (data.view) setActiveView(data.view);
+    // Farklı bir oturumun bildirimi: önce o oturumu aç (ağır aksiyonu stale state'le tetikleme).
+    if (data.convoId && data.convoId !== conversationId) {
+      openConversation(data.convoId);
+      return;
+    }
+    if (action === "operator-build") void operatorBuild();
+    else if (action === "team-start") void createPlan(true);
+    else if (action === "team-review") void createPlan(false);
+  };
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
+    navigator.serviceWorker.register("/sw.js").then((reg) => { swRegistration = reg; }).catch(() => {});
+    const onMsg = (e: MessageEvent) => {
+      if (e.data?.type === "orkestra-notification") notifActionRef.current(e.data.action, e.data.data ?? {});
+    };
+    navigator.serviceWorker.addEventListener("message", onMsg);
+    return () => navigator.serviceWorker.removeEventListener("message", onMsg);
+  }, []);
+  // İzin yoksa GÜNDE BİR kez sor (kullanıcı tarayıcıda kalıcı engellemediyse). Banner App içinde.
+  const [notifAskToday, setNotifAskToday] = useState(false);
+  useEffect(() => {
+    if (!notificationsSupported) return;
+    if (notificationPermission() === "granted") return;
+    const today = new Date().toISOString().slice(0, 10);
+    if (localStorage.getItem("orkestra.notifAsked") !== today) setNotifAskToday(true);
+  }, []);
+  const askNotificationPermission = async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    localStorage.setItem("orkestra.notifAsked", today);
+    const perm = await requestNotificationPermission();
+    setNotifPerm(perm);
+    setNotifAskToday(false);
+  };
 
   const [chatInput, setChatInput] = useState("");
   const [attachments, setAttachments] = useState<{ path: string; name: string; preview: string; isImage: boolean }[]>([]);
@@ -1174,6 +1374,10 @@ function App() {
   useEffect(() => {
     if (mode !== "single" && !multiAvailable) setMode("single");
   }, [mode, multiAvailable]);
+  // "Çoklu Ajan" yalnızca SOHBET modunda var; kod moduna geçince multi → debate.
+  useEffect(() => {
+    if (activeView === "code" && mode === "multi") setMode("debate");
+  }, [activeView, mode]);
 
   const selectedTool = useMemo(
     () => cliStatus?.tools.find((tool) => tool.id === singleCli),
@@ -1590,6 +1794,8 @@ function App() {
         setActiveRun((cur) => (cur && cur.id === event.runId ? { ...cur, activeStep: event.message } : cur));
       }
       // Faz bitti → raporu chat'e ekle + "devam et" butonunu göster (run hâlâ çalışıyor, onay bekliyor).
+      // Tazelik: SSE replay'inde (oturuma dönünce) eski event'ler için BİLDİRİM tetiklenmesin.
+      const fresh = Date.now() - Date.parse(event.createdAt || "") < 15000;
       if (event.type === "phase_done") {
         // İçerik tekilleştirmesi: SSE replay'inde (oturuma dönünce) aynı faz raporu iki kez eklenmesin.
         setMessages((current) =>
@@ -1598,6 +1804,13 @@ function App() {
             : [...current, { id: crypto.randomUUID(), role: "assistant", planner: "system", modelLabel: "Orkestra", content: event.message, createdAt: new Date().toISOString() }]
         );
         setPhasePending(event.runId);
+        if (fresh) void showNotify({
+          title: text.notifPhaseTitle,
+          body: (event.message ?? "").replace(/\s+/g, " ").slice(0, 140),
+          tag: `phase-${event.runId}`,
+          data: { kind: "phase", view: "code", convoId: codeConvoIdRef.current, runId: event.runId },
+          actions: [{ action: "phase-continue", title: text.phaseContinue }]
+        });
       }
       // ÖNEMLİ: ajan-bazlı completed/failed (agentId dolu) RUN'ı bitirmez — sadece o ajan bitti.
       // Run'ın gerçekten bittiği, agentId'siz (run-seviyesi) completed/failed olayıdır.
@@ -1612,6 +1825,18 @@ function App() {
             ? { ...cur, status: event.type === "completed" ? "completed" : "failed", activeStep: event.type, completedAt: new Date().toISOString() }
             : cur
         );
+        if (fresh && event.type === "completed") void showNotify({
+          title: text.notifCodeDoneTitle,
+          body: text.notifCodeDoneBody,
+          tag: `run-${event.runId}`,
+          data: { kind: "done", view: "code", convoId: codeConvoIdRef.current, runId: event.runId }
+        });
+        if (fresh && event.type === "failed" && !paused) void showNotify({
+          title: text.notifErrorTitle,
+          body: (event.message ?? "").replace(/\s+/g, " ").slice(0, 140),
+          tag: `run-${event.runId}`,
+          data: { kind: "error", view: "code", convoId: codeConvoIdRef.current, runId: event.runId }
+        });
         void refresh();
       }
     };
@@ -1825,6 +2050,17 @@ function App() {
     ]);
     setLastAnalysis(content);
     setOperatorAnalyzing(null);
+    // Aksiyon kartı hazır (Ekip / Operatör) → bildir; bildirimden doğrudan yanıtlanabilir.
+    void showNotify({
+      title: text.notifActionTitle,
+      body: text.notifActionBody,
+      tag: `action-${codeConvoIdRef.current}`,
+      data: { kind: "action", view: "code", convoId: codeConvoIdRef.current },
+      actions: [
+        { action: "team-start", title: text.notifActTeamStart },
+        { action: "operator-build", title: text.notifActOperator }
+      ]
+    });
   }
 
   async function sendChat(overrideText?: string) {
@@ -1898,6 +2134,13 @@ function App() {
         }))
       ]);
       if (response.action === "suggest_pipeline") setSuggestedPrompt(response.suggestedPrompt ?? content);
+      // Sohbet modunda: model(ler) cevabını bitirdi → bildir (pencere odakta değilse).
+      if (activeView === "chat" && !response.error) void showNotify({
+        title: text.notifChatDoneTitle,
+        body: (responseMessages[0]?.content ?? "").replace(/\s+/g, " ").slice(0, 140),
+        tag: `chat-${conversationId}`,
+        data: { kind: "chat-done", view: "chat", convoId: conversationId }
+      });
       if (response.error) {
         // Sağ-alt baloncuk (toast) yok — hata zaten sohbette/stream'de görünüyor.
         setStreamItems((current) => [
@@ -1910,6 +2153,12 @@ function App() {
             createdAt: new Date().toISOString()
           }
         ]);
+        void showNotify({
+          title: text.notifErrorTitle,
+          body: (response.error ?? "").replace(/\s+/g, " ").slice(0, 140),
+          tag: `err-${conversationId}`,
+          data: { kind: "error", view: activeView, convoId: conversationId }
+        });
       }
     } catch (error) {
       const errorText = error instanceof Error ? error.message : String(error);
@@ -1934,6 +2183,12 @@ function App() {
           createdAt: new Date().toISOString()
         }
       ]);
+      void showNotify({
+        title: text.notifErrorTitle,
+        body: errorText.replace(/\s+/g, " ").slice(0, 140),
+        tag: `err-${conversationId}`,
+        data: { kind: "error", view: activeView, convoId: conversationId }
+      });
     } finally {
       setIsThinking(false);
     }
@@ -1976,8 +2231,9 @@ function App() {
   }
 
   // Ekip planı üret (plancı projeyi alt-görevlere böler) ve düzenleme modalını aç.
-  async function createPlan() {
-    setPlanOpen(true);
+  // autoStart=true → modalı atlayıp planı doğrudan başlat (bildirimden "Ekip: Başlat").
+  async function createPlan(autoStart = false) {
+    if (!autoStart) setPlanOpen(true);
     setPlanLoading(true);
     setPlanMeta(null);
     try {
@@ -1987,7 +2243,8 @@ function App() {
         history: messages,
         planner: lead?.cli ?? "auto",
         model: lead && lead.model !== "default" ? lead.model : undefined,
-        analysis: lastAnalysis ?? undefined
+        analysis: lastAnalysis ?? undefined,
+        agentCount: participants.length || undefined
       });
       // Her göreve, oturum açılmış (limitli olmayan) bir CLI+model'i varsayılan ata —
       // kullanıcı modalda değiştirebilir. Tartışmadaki katılımcıları öncelikli dağıt.
@@ -2001,11 +2258,29 @@ function App() {
         const pick = pool.length ? pool[i % pool.length] : undefined;
         return { ...t, cli: pick?.cli, model: pick?.model };
       });
-      setPlanTasks(seeded);
-      setPlanMeta(res.modelLabel);
+      if (autoStart) {
+        // Modalsız doğrudan başlat (bildirimden "Ekip: Başlat").
+        const goal = goalFromConversation() || seeded.map((t) => t.title).join("; ");
+        const run = await api.post<Run>("/api/runs", {
+          prompt: goal,
+          tasks: wireTeamDependencies(seeded),
+          workspacePath: projectWorkspace ?? undefined
+        });
+        setActiveRun(run);
+        setProjectWorkspace(run.workspacePath);
+        ensureProject(run.workspacePath, deriveTitle(messages));
+        setEvents([]);
+        setSuggestedPrompt(null);
+        setCodeDebateDone(false);
+        setCodingActive(true);
+        await refresh();
+      } else {
+        setPlanTasks(seeded);
+        setPlanMeta(res.modelLabel);
+      }
     } catch (error) {
       setPlanTasks([]);
-      setNotice(`${language === "tr" ? "Plan üretilemedi" : "Plan failed"}: ${error instanceof Error ? error.message : String(error)}`);
+      console.error("[Orkestra] Plan üretilemedi:", error);
     } finally {
       setPlanLoading(false);
     }
@@ -2164,10 +2439,14 @@ function App() {
   // Çalışan run'ı durdur.
   async function stopRun() {
     if (!activeRun) return;
+    const id = activeRun.id;
+    // İyimser: UI'da anında durdur (backend yavaş/409 olsa bile kullanıcı takılı kalmasın).
+    setActiveRun((cur) => (cur && cur.id === id ? { ...cur, status: "failed", activeStep: "stopped", completedAt: new Date().toISOString() } : cur));
+    setPhasePending(null);
     try {
-      await api.post(`/api/runs/${activeRun.id}/stop`);
+      await api.post(`/api/runs/${id}/stop`);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : String(error));
+      console.error("[Orkestra] Durdurma hatası:", error);
     }
   }
 
@@ -2439,6 +2718,17 @@ function App() {
           onRefresh={() => void refresh()}
           onFinish={() => { localStorage.setItem("orkestra.setupDone", "1"); setSetupDone(true); }}
         />
+      )}
+      {setupDone && notifAskToday && (
+        <div className="notifBanner">
+          <Bell size={16} />
+          <div className="notifBannerText">
+            <strong>{text.notifEnableTitle}</strong>
+            <span>{text.notifEnableDesc}</span>
+          </div>
+          <button className="primaryButton" onClick={() => void askNotificationPermission()}>{text.notifEnableBtn}</button>
+          <button className="ghostButton" onClick={() => { localStorage.setItem("orkestra.notifAsked", new Date().toISOString().slice(0, 10)); setNotifAskToday(false); }}>{text.notifEnableLater}</button>
+        </div>
       )}
       <section className={`workspace${sidebarCollapsed ? " sidebarCollapsed" : ""}`}>
         {activeView === "chat" ? (
@@ -2951,6 +3241,11 @@ function SetupWizard({
   const [installing, setInstalling] = useState<Set<string>>(new Set());
   const [loggingIn, setLoggingIn] = useState<Set<string>>(new Set());
   const [installWarn, setInstallWarn] = useState(false);
+  const [nPerm, setNPerm] = useState<NotificationPermission>(notificationPermission());
+  const enableNotifications = async () => {
+    localStorage.setItem("orkestra.notifAsked", new Date().toISOString().slice(0, 10));
+    setNPerm(await requestNotificationPermission());
+  };
   const login = async (tool: CliToolStatus) => {
     setLoggingIn((s) => new Set(s).add(tool.id));
     await onLogin(tool);
@@ -3112,6 +3407,22 @@ function SetupWizard({
                 ))}
               </div>
               {!anyReady && <p className="wizardWarn"><AlertTriangle size={14} /> {text.needOneCli}</p>}
+              {notificationsSupported && (
+                <div className="wizardNotifRow">
+                  <Bell size={18} />
+                  <div className="wizardNotifText">
+                    <strong>{text.notifEnableTitle}</strong>
+                    <span>{text.notifEnableDesc}</span>
+                  </div>
+                  {nPerm === "granted" ? (
+                    <span className="wizardBadge ok"><CheckCircle2 size={13} /> {text.ready}</span>
+                  ) : nPerm === "denied" ? (
+                    <span className="wizardBadge no"><AlertTriangle size={13} /> {text.notReady}</span>
+                  ) : (
+                    <button className="primaryButton" onClick={() => void enableNotifications()}>{text.notifEnableBtn}</button>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -3619,6 +3930,16 @@ function ChatPanel({
             <div className="bubbleFooter">
               {message.createdAt && <time>{new Date(message.createdAt).toLocaleTimeString("tr-TR")}</time>}
               <CopyButton value={message.content} label={text.copyMessage} copiedLabel={text.copied} />
+              {message.role === "assistant" && message.content.trim().length > 40 && (
+                <>
+                  <button className="bubbleExportBtn" onClick={() => exportAsPdf(message.content)} title={text.exportPdf}>
+                    <FileText size={12} /> PDF
+                  </button>
+                  <button className="bubbleExportBtn" onClick={() => exportAsWord(message.content)} title={text.exportWord}>
+                    <FileText size={12} /> Word
+                  </button>
+                </>
+              )}
             </div>
           </article>
         ))}
@@ -5306,6 +5627,34 @@ function AgentActivityCard({ agentId, events }: { agentId: string; events: RunEv
   );
 }
 
+// Kronolojik akışta gösterilecek anlamlı event tipleri (ham stdout/stderr hariç).
+const FEED_EVENT_TYPES = new Set<RunEvent["type"]>([
+  "started", "agent_step", "file_created", "file_changed", "file_deleted", "fallback_used", "limit_detected"
+]);
+function isFeedEvent(e: RunEvent): boolean {
+  if (FEED_EVENT_TYPES.has(e.type)) return true;
+  // Ajan-seviyesi (agentId dolu) completed/failed → "X tamamladı/başarısız" satırı.
+  if ((e.type === "completed" || e.type === "failed") && e.agentId) return true;
+  return false;
+}
+
+// Tek akış satırının ikonu.
+function feedIcon(e: RunEvent): React.ReactNode {
+  if (e.type.startsWith("file_")) return <FileIcon size={12} />;
+  if (e.type === "completed") return <CheckCircle2 size={12} />;
+  if (e.type === "failed" || e.type === "limit_detected") return <AlertTriangle size={12} />;
+  if (e.type === "fallback_used") return <RefreshCw size={12} />;
+  return <Cpu size={12} />;
+}
+
+// Tek akış satırının metni (ajan adlarını korur; dosya olayları sadeleştirilir).
+function feedLineText(e: RunEvent, t: { created: string; changed: string; deleted: string }): string {
+  if (e.type === "file_created") return `${parseFileChange(e).path} ${t.created.toLocaleLowerCase("tr")}`;
+  if (e.type === "file_changed") return `${parseFileChange(e).path} ${t.changed.toLocaleLowerCase("tr")}`;
+  if (e.type === "file_deleted") return `${parseFileChange(e).path} ${t.deleted.toLocaleLowerCase("tr")}`;
+  return (e.message || "").replace(/\s+/g, " ").trim();
+}
+
 // file_* event'inin rawOutput'undan {path, adds, dels} çıkarır (JSON; değilse düz yol).
 function parseFileChange(event: RunEvent): { path: string; adds: number; dels: number } {
   const raw = event.rawOutput || event.message || "";
@@ -5771,6 +6120,22 @@ function FileDialog({
               ))}
             </div>
             <div className="fileDialogHeadActions">
+              {activeTab && (
+                <button
+                  className="iconButton"
+                  title={text.download}
+                  onClick={() => {
+                    const blob = new Blob([activeTab.content], { type: "text/plain;charset=utf-8" });
+                    const a = document.createElement("a");
+                    a.href = URL.createObjectURL(blob);
+                    a.download = activeTab.name;
+                    a.click();
+                    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+                  }}
+                >
+                  <Download size={15} />
+                </button>
+              )}
               {activeTab && <VsCodeButton path={activeTab.path} label={text.openInVscode} />}
               <button className="iconButton" onClick={onClose} title={text.close}>
                 <X size={16} />
@@ -6279,6 +6644,74 @@ function CodeChatPanel({
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages.length, events.length, thinking]);
 
+  // ── Tek kronolojik akış (kod modu): kullanıcı/asistan mesajları + ajan adımları + dosya
+  //    değişiklikleri zaman sırasına göre tek kolonda; her şey sırayla ekleniyor (CLI hissi). ──
+  const timeline = useMemo(() => {
+    type Item = { at: number; ord: number; el: React.ReactNode };
+    const items: Item[] = [];
+    messages.forEach((msg, i) => {
+      const at = Date.parse(msg.createdAt || "") || 0;
+      items.push({
+        at,
+        ord: i,
+        el: msg.planner === "analysis" ? (
+          <AnalysisCard key={`m-${msg.id ?? at}`} content={msg.content} modelLabel={msg.modelLabel} language={language} />
+        ) : (
+          <article key={`m-${msg.id ?? at}`} className={`chatBubble ${msg.role} compact`}>
+            {msg.role === "assistant" && (
+              <div className="messageMeta"><Bot size={12} /><span>{msg.modelLabel ?? "Orkestra"}</span></div>
+            )}
+            <pre>{msg.content}</pre>
+            <div className="bubbleFooter"><CopyButton value={msg.content} label={text.copyMessage} copiedLabel={text.copied} /></div>
+          </article>
+        )
+      });
+    });
+    events.forEach((e, i) => {
+      if (!isFeedEvent(e)) return;
+      const at = Date.parse(e.createdAt || "") || 0;
+      const isFile = e.type.startsWith("file_");
+      const fc = isFile ? parseFileChange(e) : null;
+      items.push({
+        at,
+        ord: 100000 + i,
+        el: (
+          <div
+            key={`e-${e.id}`}
+            className={`activityLine ${e.type}${isFile && onOpenFile ? " clickable" : ""}`}
+            onClick={() => (isFile && onOpenFile ? onOpenFile(fc!.path) : undefined)}
+            title={isFile ? fc!.path : undefined}
+          >
+            <span className="activityIcon">{feedIcon(e)}</span>
+            <span className="activityText">{feedLineText(e, text)}</span>
+            {fc && (fc.adds > 0 || fc.dels > 0) && (
+              <span className="activityDiff"><span className="diffAdd">+{fc.adds}</span> <span className="diffDel">-{fc.dels}</span></span>
+            )}
+            <time>{formatRunEventTime(e.createdAt)}</time>
+          </div>
+        )
+      });
+    });
+    // Zamana göre sırala; eşit zamanlarda ekleme sırasını koru (kararlı).
+    return items.sort((a, b) => a.at - b.at || a.ord - b.ord).map((it) => it.el);
+  }, [messages, events, language, onOpenFile, text]);
+
+  const fileTotals = computeFileTotals(events);
+  // O an çalışan TÜM ajanlar (her ajanın son event'i completed/failed değilse aktif) →
+  // paralel kodlama görünür olsun (tek ajan gibi durmasın).
+  const activeAgents = useMemo(() => {
+    const latest = new Map<string, RunEvent>();
+    for (const e of events) {
+      if (e.agentId) latest.set(e.agentId, e);
+    }
+    const out: { id: string; step: string }[] = [];
+    for (const [id, e] of latest) {
+      if (e.type === "completed" || e.type === "failed") continue;
+      out.push({ id, step: (e.message || "").replace(/\s+/g, " ") });
+    }
+    return out;
+  }, [events]);
+
   return (
     <section className="codeChatPanel glassPanel">
       {previewAvailable && (
@@ -6291,32 +6724,33 @@ function CodeChatPanel({
       )}
 
       <div className="codeChatMessages" ref={scrollRef}>
-        {messages.map((msg) =>
-          msg.planner === "analysis" ? (
-            <AnalysisCard
-              key={msg.id ?? `${msg.role}-${msg.createdAt}`}
-              content={msg.content}
-              modelLabel={msg.modelLabel}
-              language={language}
-            />
-          ) : (
-            <article key={msg.id ?? `${msg.role}-${msg.createdAt}`} className={`chatBubble ${msg.role} compact`}>
-              {msg.role === "assistant" && (
-                <div className="messageMeta">
-                  <Bot size={12} />
-                  <span>{msg.modelLabel ?? "Orkestra"}</span>
-                </div>
-              )}
-              <pre>{msg.content}</pre>
-              <div className="bubbleFooter">
-                <CopyButton value={msg.content} label={text.copyMessage} copiedLabel={text.copied} />
+        {/* Tek kronolojik akış: kullanıcı mesajı → ajan adımları → dosya değişiklikleri → final. */}
+        {timeline}
+        {/* Canlı "şu an ne yapılıyor" satırı (çalışırken, faz onayı beklemiyorken). */}
+        {runActive && !phasePending && (
+          activeAgents.length > 0 ? (
+            activeAgents.map((a) => (
+              <div className="activityLine working" key={a.id}>
+                <span className="liveSpinner" />
+                <span className="activityText">{a.step || text.working}</span>
               </div>
-            </article>
+            ))
+          ) : (
+            <div className="activityLine working">
+              <span className="liveSpinner" />
+              <span className="activityText">{text.working}</span>
+            </div>
           )
         )}
-        {/* Canlı aktivite (yapılan değişiklikler) mesajların hemen altında, aksiyon barlarının ÜSTÜNDE.
-            Faz onayı beklerken spinner gösterme (run "awaiting" durumunda stale "kodluyor" çıkmasın). */}
-        {(run || events.length > 0) && <AgentActivitySection events={events} language={language} onOpenFile={onOpenFile} onReview={onReview} running={runActive && !phasePending} />}
+        {/* Run bittiğinde tek özet + İncele (diff paneli). */}
+        {!runActive && fileTotals.count > 0 && (
+          <button className="activityReviewLine" onClick={() => onReview?.()}>
+            <Diamond size={13} />
+            <span>{fileTotals.count} {text.fileEditedNoun}</span>
+            <span className="activityDiff"><span className="diffAdd">+{fileTotals.adds}</span> <span className="diffDel">-{fileTotals.dels}</span></span>
+            <span className="activityReviewBtn">{text.review}</span>
+          </button>
+        )}
         {operatorAnalyzing && (
           <div className="operatorAnalyzing">
             <span className="liveSpinner" />
@@ -6332,15 +6766,19 @@ function CodeChatPanel({
         {/* Aksiyon barları EN ALTTA: faz onayı veya tartışma-sonrası 3 buton. */}
         {phasePending && (
           <div className="phasePendingBar">
-            <span className="phasePendingHint">{text.phaseDoneHint}</span>
+            {/* Gerçek faz bitişinde run "running" (awaiting) kalır → "Faz tamamlandı".
+                STOP/duraklatmada status "failed" olur → "Duraklatıldı" (yanlışlıkla faz bitti demesin). */}
+            <span className="phasePendingHint">{run?.status === "failed" ? text.pausedHint : text.phaseDoneHint}</span>
             <button className="analysisActionBtn operator" onClick={onResumePhase}>
               <Play size={14} />
               {text.phaseContinue}
             </button>
-            <button className="analysisActionBtn" onClick={onStopRun}>
-              <X size={14} />
-              {text.stop}
-            </button>
+            {run?.status !== "failed" && (
+              <button className="analysisActionBtn" onClick={onStopRun}>
+                <X size={14} />
+                {text.stop}
+              </button>
+            )}
           </div>
         )}
         {/* 3 buton: analiz kartı VARSA (operatöre/ekibe kart olmadan iş verilmesin), çalışma/kodlama/analiz
@@ -6357,56 +6795,59 @@ function CodeChatPanel({
       </div>
 
       <div className="codeChatComposer">
-        {codingActive && (
-          <div className="codingModeBar">
-            <span className="codingModeHint">⌨️ {text.codingModeHint}</span>
-            <button className="ghostButton" onClick={onExitCoding} title={text.backToDebateTitle}>
-              <Swords size={13} />
-              {text.backToDebate}
-            </button>
+        {runActive ? (
+          /* Run aktif: interaktif ajan ayarları gizli; küçük salt-okunur mod çipi. */
+          <div className="runModeChip">
+            {mode === "debate" ? <Swords size={12} /> : <Bot size={12} />}
+            <span>{modeMeta[mode].label}{participants.length > 1 ? ` · ${participants.length} ${language === "tr" ? "ajan" : "agents"}` : ""}</span>
           </div>
-        )}
-        <div className="modeSwitch compact codeModeSwitch">
-          {(["single", "multi", "debate"] as ChatMode[]).map((item) => {
-            const disabled = item !== "single" && !multiAvailable;
-            return (
-              <button
-                key={item}
-                className={`modeTab${mode === item ? " on" : ""}${item === "debate" ? " debate" : ""}`}
-                disabled={disabled}
-                onClick={() => onModeChange(item)}
-                title={modeMeta[item].desc}
-              >
-                {item === "single" && <Bot size={13} />}
-                {item === "multi" && <Users size={13} />}
-                {item === "debate" && <Swords size={13} />}
-                {modeMeta[item].label}
-              </button>
-            );
-          })}
-        </div>
-        {(mode === "debate" || mode === "multi") && (
-          <div className="debateControls compact">
-            <ModelPicker
-              language={language}
-              sources={participantSources}
-              mode="multi"
-              participants={participants}
-              onParticipantsChange={onParticipantsChange}
-            />
+        ) : (
+          <>
+            {/* Kod modunda "Çoklu Ajan" YOK → yalnızca Tek Ajan + Tartışma. */}
+            <div className="modeSwitch compact codeModeSwitch">
+              {(["single", "debate"] as ChatMode[]).map((item) => {
+                const disabled = item !== "single" && !multiAvailable;
+                return (
+                  <button
+                    key={item}
+                    className={`modeTab${mode === item ? " on" : ""}${item === "debate" ? " debate" : ""}`}
+                    disabled={disabled}
+                    onClick={() => onModeChange(item)}
+                    title={modeMeta[item].desc}
+                  >
+                    {item === "single" ? <Bot size={13} /> : <Swords size={13} />}
+                    {modeMeta[item].label}
+                  </button>
+                );
+              })}
+              {codingActive && (
+                <button className="modeExitBtn" onClick={onExitCoding} title={text.backToDebateTitle}>
+                  <Swords size={12} /> {text.backToDebate}
+                </button>
+              )}
+            </div>
             {mode === "debate" && (
-              <ModelPicker
-                language={language}
-                sources={participantSources}
-                mode="single"
-                selected={operatorSel}
-                onSelect={onOperatorChange}
-                allowNone
-                triggerPrefix={text.operatorSelect}
-                noneLabel={text.operatorNone}
-              />
+              <div className="debateControls compact">
+                <ModelPicker
+                  language={language}
+                  sources={participantSources}
+                  mode="multi"
+                  participants={participants}
+                  onParticipantsChange={onParticipantsChange}
+                />
+                <ModelPicker
+                  language={language}
+                  sources={participantSources}
+                  mode="single"
+                  selected={operatorSel}
+                  onSelect={onOperatorChange}
+                  allowNone
+                  triggerPrefix={text.operatorSelect}
+                  noneLabel={text.operatorNone}
+                />
+              </div>
             )}
-          </div>
+          </>
         )}
         <input
           ref={fileInputRef}

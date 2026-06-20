@@ -232,7 +232,8 @@ export async function generatePlan(
   message?: string,
   preferred?: PlannerSelection,
   analysis?: string,
-  model?: string
+  model?: string,
+  agentCount?: number
 ) {
   // Fazları İCRA EDEN ajan belirler: operatörde operatör, ekipte ilgili ajan (preferred+model).
   const order: PlannerId[] =
@@ -240,7 +241,7 @@ export async function generatePlan(
   for (const planner of order) {
     try {
       await assertPlannerReady(planner);
-      const raw = await callPlannerRaw(planner, buildPlanPrompt(history, message, analysis), model);
+      const raw = await callPlannerRaw(planner, buildPlanPrompt(history, message, analysis, agentCount), model);
       const tasks = parsePlanTasks(cleanPlannerOutput(raw));
       if (tasks.length) {
         return { tasks, planner, modelLabel: model && model !== "default" ? `${modelLabel(planner)} · ${model}` : modelLabel(planner) };
@@ -258,10 +259,12 @@ export async function generatePlan(
   };
 }
 
-function buildPlanPrompt(history: ChatMessage[], message?: string, analysis?: string) {
+function buildPlanPrompt(history: ChatMessage[], message?: string, analysis?: string, agentCount?: number) {
+  const n = agentCount && agentCount > 1 ? agentCount : 0;
   return [
     "Sen Orkestra ekip plancısısın. Aşağıdaki projeyi paralel/sıralı çalıştırılabilecek ALT-GÖREVLERE böl",
     "VE mantıklı FAZLARA ayır. Kararlarını AŞAĞIDAKİ OPERATÖR ANALİZİNE dayandır.",
+    n ? `- ÖNEMLİ: ${n} ajan AYNI ANDA çalışacak. HER FAZDA EN AZ ${n} adet BAĞIMSIZ, ayrı-klasörlü paralel görev kur ki ${n} ajan da boş kalmadan çalışsın.` : "",
     "Çıktıyı SADECE geçerli JSON olarak ver (başka metin yok). Şema:",
     '{ "tasks": [ { "id": "kisa-id", "title": "ne yapılacağı (kısa, net)", "role": "builder", "folder": "klasor-adi", "dependsOn": ["onceki-id"], "phase": 1 } ] }',
     "Kurallar:",
@@ -644,6 +647,7 @@ async function buildClaudePrompt(message: string, history: ChatMessage[], detail
     "cwd'deki proje dosyalarını veya hafızayı bağlam alma.",
     "Kullanıcı sohbet ederse kısa ve doğal yanıt ver.",
     "Kullanıcı bir uygulama, site, script, kod veya proje isterse uygulanabilir bir plan çıkar ve kod aşamasına geçilebileceğini söyle.",
+    "ÖNEMLİ — belge istekleri: Kullanıcı bir metin/şiir/yazı/rapor için 'Word / PDF / .docx / doküman / dosya olarak ver/indir/oluştur' derse: SEN dosya oluşturamazsın ve buna GEREK YOK; 'iznim yok', 'dosya yazamıyorum', 'erişim kapalı' GİBİ ŞEYLER SÖYLEME, reddetme. İstenen içeriği DOĞRUDAN, düzgün biçimlendirilmiş MARKDOWN olarak yaz (başlık için #, paragraflar). Uygulama, yazdığın içeriği PDF/Word olarak indirmeyi otomatik olarak sunar.",
     "Yanıtını Türkçe, net ve aksiyon odaklı tut. Türkçe karakterleri doğru kullan.",
     "",
     "Konuşma geçmişi:",

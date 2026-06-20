@@ -5425,3 +5425,39 @@ textarea:focus {
   max-height: none;
   height: 100%;
 }
+
+/* Bildirim banner + wizard izin satiri */
+.notifBanner { display:flex; align-items:center; gap:12px; margin:10px 14px 0; padding:10px 14px; border-radius:12px; border:1px solid rgba(129,140,248,0.35); background:rgba(129,140,248,0.10); color:var(--text-primary); }
+.notifBannerText { display:flex; flex-direction:column; gap:2px; flex:1; min-width:0; }
+.notifBannerText strong { font-size:0.84rem; }
+.notifBannerText span { font-size:0.76rem; color:var(--text-secondary); }
+.wizardNotifRow { display:flex; align-items:center; gap:12px; margin-top:16px; padding:12px 14px; border-radius:12px; border:1px solid rgba(129,140,248,0.30); background:rgba(129,140,248,0.08); width:100%; }
+.wizardNotifText { display:flex; flex-direction:column; gap:2px; flex:1; min-width:0; text-align:left; }
+.wizardNotifText strong { font-size:0.84rem; }
+.wizardNotifText span { font-size:0.74rem; color:var(--text-secondary); }
+
+/* Kod modu tek kronolojik akis satirlari */
+.activityLine { display:flex; align-items:center; gap:8px; padding:3px 10px; font-size:0.76rem; color:var(--text-secondary); border-radius:6px; }
+.activityLine.clickable { cursor:pointer; }
+.activityLine.clickable:hover { background:rgba(129,140,248,0.08); color:var(--text-primary); }
+.activityIcon { display:grid; place-items:center; color:var(--text-muted); flex-shrink:0; }
+.activityText { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.activityDiff { font-size:0.70rem; font-weight:600; flex-shrink:0; }
+.activityLine time { font-size:0.66rem; color:var(--text-muted); opacity:0.6; flex-shrink:0; }
+.activityLine.file_created .activityIcon { color:#22c55e; }
+.activityLine.file_deleted .activityIcon { color:#ef4444; }
+.activityLine.completed .activityIcon { color:#22c55e; }
+.activityLine.failed .activityIcon, .activityLine.limit_detected .activityIcon { color:#f59e0b; }
+.activityLine.working { color:var(--text-primary); padding-top:5px; padding-bottom:5px; }
+.activityReviewLine { display:flex; align-items:center; gap:8px; width:100%; border:1px solid rgba(148,163,184,0.16); background:rgba(148,163,184,0.05); padding:8px 12px; border-radius:9px; cursor:pointer; color:var(--text-secondary); font-size:0.78rem; margin-top:8px; }
+.activityReviewLine:hover { border-color:rgba(129,140,248,0.4); color:var(--text-primary); }
+.activityReviewBtn { margin-left:auto; color:#818cf8; font-weight:600; }
+
+/* Run aktifken salt-okunur mod cipi + Tartismaya don kucuk butonu */
+.runModeChip { display:inline-flex; align-items:center; gap:6px; padding:4px 10px; margin-bottom:8px; border-radius:999px; border:1px solid rgba(129,140,248,0.3); background:rgba(129,140,248,0.1); color:var(--text-secondary); font-size:0.74rem; font-weight:600; width:fit-content; }
+.modeExitBtn { display:inline-flex; align-items:center; gap:5px; margin-left:auto; padding:4px 10px; border:none; border-radius:8px; background:transparent; color:var(--text-muted); font-size:0.74rem; cursor:pointer; }
+.modeExitBtn:hover { background:rgba(148,163,184,0.12); color:var(--text-primary); }
+
+/* Chat mesaji disa aktarma butonlari (PDF / Word) */
+.bubbleExportBtn { display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border:1px solid rgba(148,163,184,0.2); border-radius:6px; background:transparent; color:var(--text-muted); font-size:0.68rem; font-weight:600; cursor:pointer; transition:background .12s,color .12s,border-color .12s; }
+.bubbleExportBtn:hover { background:rgba(129,140,248,0.12); color:var(--text-primary); border-color:rgba(129,140,248,0.4); }

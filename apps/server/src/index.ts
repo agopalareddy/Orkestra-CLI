@@ -218,7 +218,7 @@ app.post<{ Body: { history?: ChatMessage[]; message?: string; planner?: "claude"
 
 // Plancı projeyi alt-görevlere böler + FAZLARA ayırır (operatör analizini dikkate alarak).
 // Fazları icra eden ajan belirler: operatör/ekip lideri (planner+model). Kullanıcı düzenleyip onaylar.
-app.post<{ Body: { history?: ChatMessage[]; message?: string; planner?: "claude" | "codex" | "antigravity" | "auto"; analysis?: string; model?: string } }>(
+app.post<{ Body: { history?: ChatMessage[]; message?: string; planner?: "claude" | "codex" | "antigravity" | "auto"; analysis?: string; model?: string; agentCount?: number } }>(
   "/api/plan",
   async (request) => {
     return generatePlan(
@@ -226,7 +226,8 @@ app.post<{ Body: { history?: ChatMessage[]; message?: string; planner?: "claude"
       request.body.message,
       request.body.planner ?? "auto",
       request.body.analysis,
-      request.body.model
+      request.body.model,
+      request.body.agentCount
     );
   }
 );
@@ -555,11 +556,19 @@ app.post<{ Params: { id: string }; Body: { note?: string } }>("/api/runs/:id/not
   return { ok: true };
 });
 
-// Çalışan run'ı durdur.
+// Çalışan run'ı durdur. Canlı kontrol varsa süreçleri öldürür; YOKSA (ör. sunucu yeniden
+// başlamış, kontrol kaybolmuş) yine de run'ı store'da durdurulmuş işaretler ve event yayar →
+// UI her durumda durur (sessizce takılı kalmaz).
 app.post<{ Params: { id: string } }>("/api/runs/:id/stop", async (request, reply) => {
-  const ok = runner.stop(request.params.id);
-  if (!ok) return reply.code(409).send({ error: "Run is not active." });
-  return { ok: true };
+  const id = request.params.id;
+  const killed = runner.stop(id);
+  const run = store.getRun(id);
+  if (run && run.status !== "completed" && run.status !== "failed") {
+    store.updateRun(id, { status: "failed", activeStep: "stopped", completedAt: new Date().toISOString(), summary: "Durduruldu." });
+    const ev = store.addEvent({ runId: id, agentId: null, type: "failed", message: "🛑 Durduruldu.", rawOutput: null, createdAt: new Date().toISOString() });
+    hub.publish(ev);
+  }
+  return { ok: true, killed };
 });
 
 // Faz onayı: kullanıcı "devam et" deyince bir sonraki faza geçer.
