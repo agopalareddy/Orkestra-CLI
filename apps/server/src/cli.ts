@@ -29,8 +29,13 @@ export async function runPlannerChat(
   model?: string,
   effort?: EffortLevel,
   detailLevel?: "low" | "medium" | "high",
-  participants?: Participant[]
+  participants?: Participant[],
+  cache?: ContextCache
 ) {
+  // Bağlamı (özet + son N mesaj) BİR KEZ hesapla; tüm planlayıcılara hazır geçir
+  // (multi'de her katılımcı ayrı özetlemesin) + cache ile artımlı özetle.
+  const ctx = await buildContextWithCache(history, detailLevel, cache);
+  const summaryMeta = { contextSummary: ctx.summary, summaryUpto: ctx.upto };
   if (preferred === "all") {
     // Katilimcilar verilmisse (CLI+model) onlari kullan; yoksa tum dogrulanmis CLI'lar (default model).
     let people: Participant[];
@@ -52,7 +57,7 @@ export async function runPlannerChat(
       };
     }
     const results = await Promise.all(
-      people.map((p) => runSinglePlanner(p.cli, message, history, p.model ?? model, effort, detailLevel, participantLabel(p.cli, p.model)))
+      people.map((p) => runSinglePlanner(p.cli, message, history, p.model ?? model, effort, detailLevel, participantLabel(p.cli, p.model), ctx.text))
     );
     const allFailed = results.every((result) => result.usedFallback);
     return {
@@ -66,7 +71,8 @@ export async function runPlannerChat(
         modelLabel: result.modelLabel
       })),
       usedFallback: allFailed,
-      error: allFailed ? results.map((result) => result.error).filter(Boolean).join("\n") : undefined
+      error: allFailed ? results.map((result) => result.error).filter(Boolean).join("\n") : undefined,
+      ...summaryMeta
     };
   }
 
@@ -76,12 +82,13 @@ export async function runPlannerChat(
   for (const planner of order) {
     try {
       await assertPlannerReady(planner);
-      const output = await callPlanner(planner, message, history, model, effort, detailLevel);
+      const output = await callPlanner(planner, message, history, model, effort, detailLevel, ctx.text);
       return {
         planner,
         modelLabel: modelLabel(planner),
         output: cleanPlannerOutput(output),
-        usedFallback: planner !== preferred && preferred !== "auto"
+        usedFallback: planner !== preferred && preferred !== "auto",
+        ...summaryMeta
       };
     } catch (error) {
       const rawOutput = error instanceof Error ? error.message : String(error);
@@ -107,11 +114,11 @@ export async function runPlannerChat(
   };
 }
 
-async function runSinglePlanner(planner: PlannerId, message: string, history: ChatMessage[], model?: string, effort?: EffortLevel, detailLevel?: "low" | "medium" | "high", displayLabel?: string) {
+async function runSinglePlanner(planner: PlannerId, message: string, history: ChatMessage[], model?: string, effort?: EffortLevel, detailLevel?: "low" | "medium" | "high", displayLabel?: string, preHistory?: string) {
   const labelText = displayLabel ?? modelLabel(planner);
   try {
     await assertPlannerReady(planner);
-    const output = cleanPlannerOutput(await callPlanner(planner, message, history, model, effort, detailLevel));
+    const output = cleanPlannerOutput(await callPlanner(planner, message, history, model, effort, detailLevel, preHistory));
     return {
       planner,
       modelLabel: labelText,
@@ -639,8 +646,8 @@ async function runClaude(prompt: string, model?: string, effort?: EffortLevel) {
   return runTool("claude", args, prompt, claudeTimeoutMs);
 }
 
-async function buildClaudePrompt(message: string, history: ChatMessage[], detailLevel?: "low" | "medium" | "high") {
-  const formattedHistory = await formatHistoryWithDetail(history, detailLevel);
+async function buildClaudePrompt(message: string, history: ChatMessage[], detailLevel?: "low" | "medium" | "high", preHistory?: string) {
+  const formattedHistory = preHistory ?? await formatHistoryWithDetail(history, detailLevel);
   return [
     "Sen Orkestra'nın planlayıcı ajanısın; bu bir sohbet oturumudur, kod tabanına müdahale etme.",
     "Aşağıdaki konuşma geçmişini dikkate al — geçmişte senin dışında Gemini ve Codex gibi başka AI'lar da yanıt vermiş olabilir, onların söylediklerini de bağlam olarak kullan.",
@@ -684,8 +691,8 @@ function loginCommand(id: PlannerId) {
   return "agy login";
 }
 
-async function callPlanner(id: PlannerId, message: string, history: ChatMessage[], model?: string, effort?: EffortLevel, detailLevel?: "low" | "medium" | "high") {
-  const prompt = id === "claude" ? await buildClaudePrompt(message, history, detailLevel) : await buildPlannerPrompt(message, history, detailLevel);
+async function callPlanner(id: PlannerId, message: string, history: ChatMessage[], model?: string, effort?: EffortLevel, detailLevel?: "low" | "medium" | "high", preHistory?: string) {
+  const prompt = id === "claude" ? await buildClaudePrompt(message, history, detailLevel, preHistory) : await buildPlannerPrompt(message, history, detailLevel, preHistory);
   return callPlannerRaw(id, prompt, model, effort);
 }
 
@@ -1267,8 +1274,63 @@ function formatRawHistory(messages: ChatMessage[]) {
     .join("\n");
 }
 
-async function buildPlannerPrompt(message: string, history: ChatMessage[], detailLevel?: "low" | "medium" | "high") {
-  const formattedHistory = await formatHistoryWithDetail(history, detailLevel);
+function summarizePrompt(formattedHistory: string): string {
+  return [
+    "Sen Orkestra moderatörüsün. Aşağıdaki konuşma geçmişini çok kısa, net bir paragrafla Türkçe olarak özetle.",
+    "Özette sadece konuşulan temel konuları ve varılan kararları belirt. Gereksiz detayları atla.",
+    "",
+    "Özetlenecek geçmiş:",
+    formattedHistory,
+    "",
+    "Şimdi kısa özetini yaz:"
+  ].join("\n");
+}
+
+// Artımlı/önbellekli bağlam: son N mesaj tam + eskiler özet. Cache verilirse SADECE yeni
+// "düşen" mesajları özetler (tüm eskiyi yeniden özetleme). Özeti geri döndürür → istemci cache'ler.
+export type ContextCache = { summary?: string; upto?: number };
+async function buildContextWithCache(
+  history: ChatMessage[],
+  detailLevel?: "low" | "medium" | "high",
+  cache?: ContextCache
+): Promise<{ text: string; summary: string; upto: number }> {
+  const level = detailLevel || "high";
+  const threshold = level === "low" ? 2 : level === "medium" ? 4 : 12;
+  if (history.length <= threshold) {
+    return { text: formatRawHistory(history), summary: "", upto: 0 };
+  }
+  const windowStart = history.length - threshold;
+  const recent = formatRawHistory(history.slice(windowStart));
+  const cachedSummary = (cache?.summary ?? "").trim();
+  const cachedUpto = cache?.upto ?? 0;
+  let summary = cachedSummary;
+  try {
+    const summarizer = await getFirstReadyPlanner();
+    if (summarizer) {
+      if (cachedSummary && cachedUpto >= 0 && cachedUpto <= windowStart) {
+        // Artımlı: yalnızca yeni düşen mesajları özetle, mevcut özete ekle (özetleme çağrısı küçülür).
+        const delta = history.slice(cachedUpto, windowStart);
+        if (delta.length) {
+          const deltaSummary = cleanPlannerOutput(await callPlannerRaw(summarizer, summarizePrompt(formatRawHistory(delta))));
+          summary = `${cachedSummary}\n${deltaSummary}`.trim();
+        }
+        // delta yoksa summary = cachedSummary → HİÇ özetleme çağrısı yok (tam tasarruf).
+      } else {
+        // Cache yok/geçersiz → tüm eskiyi bir kez özetle.
+        summary = cleanPlannerOutput(await callPlannerRaw(summarizer, summarizePrompt(formatRawHistory(history.slice(0, windowStart)))));
+      }
+    }
+  } catch (err) {
+    console.error("buildContextWithCache: özetleme hatası, fallback:", err);
+  }
+  const text = summary
+    ? `[Önceki Konuşma Özeti: ${summary}]\n\n${recent}`
+    : `[Önceki konuşmalar özetlenemedi; son ${threshold} mesaj]\n\n${recent}`;
+  return { text, summary, upto: windowStart };
+}
+
+async function buildPlannerPrompt(message: string, history: ChatMessage[], detailLevel?: "low" | "medium" | "high", preHistory?: string) {
+  const formattedHistory = preHistory ?? await formatHistoryWithDetail(history, detailLevel);
   return [
     "Sadece Orkestra chat gecmisini dikkate al; eski CLI/proje oturum baglamindan devam etme.",
     "Sen Orkestra'nın planlayıcı ajanısın. Geçmişte başka AI'lar (Claude, Gemini, Codex) da yanıt vermiş olabilir; onların mesajlarını da bağlam al.",

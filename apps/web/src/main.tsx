@@ -892,6 +892,8 @@ async function fetchWithRetry(url: string, init?: RequestInit, retries = 3): Pro
       }
       return response;
     } catch (err) {
+      // Kasıtlı iptal (stop/interrupt) → hemen fırlat, tekrar deneme.
+      if (err instanceof DOMException && err.name === "AbortError") throw err;
       if (attempt < retries) {
         await new Promise((r) => setTimeout(r, 600));
         continue;
@@ -907,11 +909,12 @@ const api = {
     if (!response.ok) throw new Error(await response.text());
     return response.json() as Promise<T>;
   },
-  async post<T>(url: string, body: unknown = {}): Promise<T> {
+  async post<T>(url: string, body: unknown = {}, signal?: AbortSignal): Promise<T> {
     const response = await fetchWithRetry(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
+      signal
     });
     if (!response.ok) throw new Error(await response.text());
     return response.json() as Promise<T>;
@@ -1386,6 +1389,16 @@ function App() {
   const [streamItems, setStreamItems] = useState<StreamItem[]>([]);
   const [suggestedPrompt, setSuggestedPrompt] = useState<string | null>(null);
   const [isThinking, setIsThinking] = useState(false);
+  // Düşünürken stop/interrupt için: o an uçuşan chat/debate isteğinin AbortController'ı.
+  const chatAbortRef = useRef<AbortController | null>(null);
+  // Artımlı bağlam özeti önbelleği (konuşma id → {summary, upto}). Oturum içi; reload'da yeniden kurulur.
+  const summaryCacheRef = useRef<Map<string, { summary: string; upto: number }>>(new Map());
+  // Düşünmeyi durdur (stop butonu): isteği iptal et, yarım çıktıyı bırak.
+  function stopThinking() {
+    chatAbortRef.current?.abort();
+    chatAbortRef.current = null;
+    setIsThinking(false);
+  }
   const [cliStatus, setCliStatus] = useState<CliStatusResponse | null>(null);
   const [gitStatus, setGitStatus] = useState<GitStatus | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -2110,11 +2123,12 @@ function App() {
     }
   }
 
-  async function streamDebate(message: string, history: ChatMessage[]) {
+  async function streamDebate(message: string, history: ChatMessage[], signal?: AbortSignal) {
     const isCode = activeView === "code";
     const res = await fetch("/api/debate", {
       method: "POST",
       headers: { "content-type": "application/json" },
+      signal,
       body: JSON.stringify({
         message,
         history,
@@ -2239,11 +2253,17 @@ function App() {
   async function sendChat(overrideText?: string) {
     const content = (overrideText ?? chatInput).trim();
     const pending = attachments;
-    if ((!content && !pending.length) || isThinking) return;
+    if (!content && !pending.length) return;
+    // Interrupt: AI düşünürken yeni prompt → mevcut isteği İPTAL ET, yeniye geç (queue yok).
+    if (isThinking && chatAbortRef.current) {
+      chatAbortRef.current.abort();
+      chatAbortRef.current = null;
+    }
     // Katman 2: açık "kodlamaya aktar" komutu → modele sormadan deterministik aktarım (yalnızca sohbette).
     if (activeView === "chat" && content && transferCommandIntent(content)) {
       setChatInput("");
       setAttachments([]);
+      setIsThinking(false);
       void transferToCode();
       return;
     }
@@ -2278,6 +2298,8 @@ function App() {
       }
     ]);
     setIsThinking(true);
+    const ac = new AbortController();
+    chatAbortRef.current = ac;
 
     try {
       // Kodlama modu: mesaj TARTIŞMA değil, ajana TALİMAT → kaldığı yerden devam et.
@@ -2286,7 +2308,7 @@ function App() {
         return;
       }
       if (selectedPlanner === "debate") {
-        await streamDebate(messageToSend, nextHistory);
+        await streamDebate(messageToSend, nextHistory, ac.signal);
         return;
       }
       const response = await api.post<ChatResponse>("/api/chat", {
@@ -2299,8 +2321,13 @@ function App() {
         participants: selectedPlanner === "all"
           ? participants.map((p) => ({ cli: p.cli, model: p.model === "default" ? undefined : p.model }))
           : undefined,
-        attachments: pending.map((item) => item.path)
-      });
+        attachments: pending.map((item) => item.path),
+        cache: summaryCacheRef.current.get(conversationId) // artımlı özet: backend tüm eskiyi yeniden özetlemesin
+      }, ac.signal);
+      // Dönen güncel özeti cache'le (sonraki istekte gönderilir → token tasarrufu).
+      if (response.contextSummary !== undefined && typeof response.summaryUpto === "number") {
+        summaryCacheRef.current.set(conversationId, { summary: response.contextSummary, upto: response.summaryUpto });
+      }
       const responseMessages = response.messages?.length ? response.messages : [response.message];
       setMessages((current) => [...current, ...responseMessages]);
       setStreamItems((current) => [
@@ -2347,6 +2374,10 @@ function App() {
         });
       }
     } catch (error) {
+      // Kasıtlı iptal (stop/interrupt) → hata gösterme, yarım çıktıyı sessizce bırak.
+      if ((error instanceof DOMException && error.name === "AbortError") || (error instanceof Error && /aborted|abort/i.test(error.message))) {
+        return;
+      }
       const errorText = error instanceof Error ? error.message : String(error);
       setMessages((current) => [
         ...current,
@@ -2376,6 +2407,7 @@ function App() {
         data: { kind: "error", view: activeView, convoId: conversationId }
       });
     } finally {
+      if (chatAbortRef.current === ac) chatAbortRef.current = null;
       setIsThinking(false);
     }
   }
@@ -3076,6 +3108,7 @@ function App() {
                   onOpenConversation={openConversation}
                   onDeleteConversation={deleteConversation}
                   onSend={(text) => void sendChat(text)}
+                  onStop={stopThinking}
                   onClear={() => {
                     setMessages([welcomeMessageFor(language)]);
                     setSuggestedPrompt(null);
@@ -3163,6 +3196,7 @@ function App() {
                   onModelChange={setSelectedModel}
                   onChange={setChatInput}
                   onSend={(t) => void sendChat(t)}
+                  onStop={stopThinking}
                   onClear={() => { setMessages([welcomeMessageFor(language)]); setSuggestedPrompt(null); setAttachments([]); }}
                   onCreateBrief={() => void createBrief()}
                   onCreatePlan={() => void createPlan()}
@@ -4068,6 +4102,7 @@ function ChatPanel({
   onOpenConversation,
   onDeleteConversation,
   onSend,
+  onStop,
   onClear,
   onCreateBrief,
   onTransferToCode,
@@ -4108,6 +4143,7 @@ function ChatPanel({
   onOpenConversation: (id: string) => void;
   onDeleteConversation: (id: string) => void;
   onSend: (text?: string) => void;
+  onStop?: () => void;
   onClear: () => void;
   onCreateBrief: () => void;
   onTransferToCode?: () => void;
@@ -4398,14 +4434,20 @@ function ChatPanel({
                     <Mic size={18} />
                   </button>
                 )}
-                <button
-                  className="iconRound sendCircle"
-                  disabled={(!value.trim() && !attachments.length) || thinking || !cliOptions.length}
-                  onClick={() => onSend()}
-                  title={text.send}
-                >
-                  <ArrowUp size={18} />
-                </button>
+                {thinking ? (
+                  <button className="iconRound sendCircle stopCircle" onClick={() => onStop?.()} title={text.stop}>
+                    <Square size={15} />
+                  </button>
+                ) : (
+                  <button
+                    className="iconRound sendCircle"
+                    disabled={(!value.trim() && !attachments.length) || !cliOptions.length}
+                    onClick={() => onSend()}
+                    title={text.send}
+                  >
+                    <ArrowUp size={18} />
+                  </button>
+                )}
               </div>
             </div>
           </>
@@ -6774,7 +6816,7 @@ function CodeChatPanel({
   language, status, messages, value, selectedPlanner, selectedModel, modelOptions,
   selectedEffort, onEffortChange, selectedDetailLevel, onDetailLevelChange,
   mode, onModeChange, multiAvailable, cliOptions, singleCli, onSingleCliChange,
-  thinking, onModelChange, onChange, onSend, onClear, onCreateBrief, onCreatePlan, onStart,
+  thinking, onModelChange, onChange, onSend, onStop, onClear, onCreateBrief, onCreatePlan, onStart,
   onContinueChat, onOperatorBuild, debateDone, operatorAnalyzing, phasePending, onResumePhase,
   codingActive, onExitCoding,
   participantSources, participants, onParticipantsChange, debateRounds, onRoundsChange,
@@ -6826,6 +6868,7 @@ function CodeChatPanel({
   onOperatorChange: (op: { cli: DebateParticipant; model: string } | null) => void;
   analysisReady: boolean;
   onStart: () => void;
+  onStop?: () => void;
   runActive: boolean;
   onAddNote: (note: string) => void;
   onStopRun: () => void;
@@ -7250,10 +7293,14 @@ function CodeChatPanel({
                         <Square size={14} />
                       </button>
                     )
+                  ) : thinking ? (
+                    <button className="iconRound sendCircle stopCircle" onClick={() => onStop?.()} title={text.stop}>
+                      <Square size={14} />
+                    </button>
                   ) : (
                     <button
                       className="iconRound sendCircle"
-                      disabled={(!value.trim() && !attachments.length) || thinking || !cliOptions.length}
+                      disabled={(!value.trim() && !attachments.length) || !cliOptions.length}
                       onClick={() => onSend()}
                       title={text.send}
                     >

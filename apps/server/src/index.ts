@@ -98,10 +98,11 @@ app.post<{ Body: ChatRequest }>("/api/chat", async (request, reply) => {
   const augmentedMessage = attachments.length
     ? `${message}\n\n[Ekli dosyalar — incele ve yanıtında dikkate al:\n${attachments.map((p) => describeAttachment(p)).join("\n\n")}]`
     : message;
-  const result = await runPlannerChat(request.body.planner ?? "auto", augmentedMessage, request.body.history ?? [], request.body.model, request.body.effort, request.body.detailLevel, request.body.participants);
+  const result = await runPlannerChat(request.body.planner ?? "auto", augmentedMessage, request.body.history ?? [], request.body.model, request.body.effort, request.body.detailLevel, request.body.participants, request.body.cache);
   const action = detectPipelineIntent(message) ? "suggest_pipeline" : "none";
   const createdAt = new Date().toISOString();
-  const messages = result.messages?.map((item) => ({
+  const resultMessages = (result as { messages?: ChatMessage[] }).messages;
+  const messages = resultMessages?.map((item) => ({
     ...item,
     id: randomUUID(),
     createdAt
@@ -122,7 +123,10 @@ app.post<{ Body: ChatRequest }>("/api/chat", async (request, reply) => {
     planner: result.planner,
     modelLabel: result.modelLabel,
     usedFallback: result.usedFallback,
-    error: result.error
+    error: result.error,
+    // Artımlı bağlam özeti — istemci bunu cache'leyip sonraki istekte geri gönderir.
+    contextSummary: (result as { contextSummary?: string }).contextSummary,
+    summaryUpto: (result as { summaryUpto?: number }).summaryUpto
   };
 });
 

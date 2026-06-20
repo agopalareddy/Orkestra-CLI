@@ -143,6 +143,7 @@ export interface ChatRequest {
   participants?: ChatParticipant[]; // "all" (paralel) modunda CLI+model katilimcilari
   attachments?: string[]; // yuklenmis gorsel dosyalarinin mutlak yollari
   detailLevel?: "low" | "medium" | "high";
+  cache?: { summary?: string; upto?: number }; // artimli baglam ozeti onbellegi
 }
 
 export interface UploadResponse {
@@ -159,6 +160,8 @@ export interface ChatResponse {
   modelLabel?: string;
   usedFallback: boolean;
   error?: string;
+  contextSummary?: string; // artimli baglam ozeti (istemci cache'ler)
+  summaryUpto?: number;
 }
 
 export interface UsageWindow {
