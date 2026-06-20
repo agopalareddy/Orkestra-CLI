@@ -5461,3 +5461,39 @@ textarea:focus {
 /* Chat mesaji disa aktarma butonlari (PDF / Word) */
 .bubbleExportBtn { display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border:1px solid rgba(148,163,184,0.2); border-radius:6px; background:transparent; color:var(--text-muted); font-size:0.68rem; font-weight:600; cursor:pointer; transition:background .12s,color .12s,border-color .12s; }
 .bubbleExportBtn:hover { background:rgba(129,140,248,0.12); color:var(--text-primary); border-color:rgba(129,140,248,0.4); }
+
+/* Belge istegine cevapta one cikan indir bar */
+.docArtifactBar { display:flex; align-items:center; gap:10px; padding:9px 12px; margin-bottom:10px; border:1px solid rgba(129,140,248,0.35); border-radius:10px; background:rgba(129,140,248,0.10); }
+.docArtifactBar > svg { color:#818cf8; flex-shrink:0; }
+.docArtifactTitle { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:0.82rem; font-weight:600; color:var(--text-primary); }
+.docArtifactDl { display:inline-flex; align-items:center; gap:5px; padding:5px 11px; border:none; border-radius:8px; background:#6366f1; color:#fff; font-size:0.75rem; font-weight:700; cursor:pointer; flex-shrink:0; }
+.docArtifactDl:hover { background:#4f46e5; }
+
+/* Onizlemeli belge artifact karti */
+.artifactCard { border:1px solid rgba(148,163,184,0.22); border-radius:12px; overflow:hidden; margin:6px 0 4px; background:rgba(15,23,42,0.4); }
+.artifactHead { display:flex; align-items:center; gap:9px; padding:9px 12px; background:rgba(148,163,184,0.10); border-bottom:1px solid rgba(148,163,184,0.16); }
+.artifactIcon { color:#22c55e; flex-shrink:0; }
+.artifactName { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:0.8rem; font-weight:650; color:var(--text-primary); }
+.artifactActions { display:flex; align-items:center; gap:4px; flex-shrink:0; }
+.artifactActions button { display:inline-flex; align-items:center; gap:4px; padding:3px 8px; border:1px solid rgba(148,163,184,0.22); border-radius:7px; background:transparent; color:var(--text-secondary); font-size:0.7rem; font-weight:600; cursor:pointer; }
+.artifactActions button:hover { background:rgba(129,140,248,0.14); color:var(--text-primary); border-color:rgba(129,140,248,0.4); }
+.artifactActions .artifactToggle { padding:3px 5px; }
+.artifactBody { max-height:420px; overflow:auto; padding:14px 16px; }
+.artifactDoc { font-size:0.82rem; line-height:1.6; color:var(--text-primary); white-space:normal; }
+.artifactDoc h1 { font-size:1.2rem; margin:0.3em 0 0.4em; }
+.artifactDoc h2 { font-size:1.05rem; margin:0.6em 0 0.3em; }
+.artifactDoc h3 { font-size:0.95rem; margin:0.5em 0 0.3em; }
+.artifactDoc p { margin:0.4em 0; }
+.artifactDoc ul, .artifactDoc ol { padding-left:20px; margin:0.3em 0; }
+.artifactDoc code { background:rgba(148,163,184,0.18); padding:1px 5px; border-radius:4px; font-size:0.92em; }
+.artifactDoc pre { background:rgba(2,4,9,0.5); padding:10px 12px; border-radius:8px; overflow:auto; }
+.artifactDoc pre code { background:none; padding:0; }
+.artifactDoc a { color:#818cf8; }
+.artifactTable { border-collapse:collapse; width:100%; font-size:0.8rem; background:#ffffff; color:#1a1a1a; }
+.artifactTable td { border:1px solid #d1d5db; padding:5px 9px; }
+.artifactTable tr:first-child td { font-weight:700; background:#f3f4f6; }
+
+/* Kodlamaya aktar butonu (sohbet composer) */
+.composerTopRow { display:flex; align-items:center; gap:10px; justify-content:space-between; }
+.transferToCodeBtn { display:inline-flex; align-items:center; gap:6px; padding:6px 13px; border-radius:9px; border:1px solid rgba(34,197,94,0.4); background:rgba(34,197,94,0.12); color:#34d399; font-size:0.78rem; font-weight:700; cursor:pointer; white-space:nowrap; flex-shrink:0; transition:background .15s,border-color .15s; }
+.transferToCodeBtn:hover { background:rgba(34,197,94,0.22); border-color:rgba(34,197,94,0.7); }

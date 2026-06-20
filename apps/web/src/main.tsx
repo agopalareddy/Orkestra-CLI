@@ -407,6 +407,13 @@ const uiText = {
     notifEnableLater: "Not now",
     exportPdf: "Download as PDF",
     exportWord: "Download as Word",
+    exportMd: "Download as .md",
+    exportTxt: "Download as .txt",
+    exportExcel: "Download as Excel",
+    transferToCode: "Move to Coding",
+    transferToCodeTitle: "Carry this chat plan into Code mode",
+    collapseCard: "Collapse",
+    expandCard: "Expand",
     download: "Download",
     preview: "Preview",
     openInBrowser: "Open in browser",
@@ -755,6 +762,13 @@ const uiText = {
     notifEnableLater: "Şimdi değil",
     exportPdf: "PDF olarak indir",
     exportWord: "Word olarak indir",
+    exportMd: ".md olarak indir",
+    exportTxt: ".txt olarak indir",
+    exportExcel: "Excel olarak indir",
+    transferToCode: "Kodlamaya aktar",
+    transferToCodeTitle: "Bu sohbet planını Code moduna taşı",
+    collapseCard: "Daralt",
+    expandCard: "Genişlet",
     download: "İndir",
     preview: "Önizleme",
     openInBrowser: "Tarayıcıda aç",
@@ -1000,14 +1014,51 @@ function docTitle(md: string): string {
   return first.replace(/[*`_]/g, "").slice(0, 60);
 }
 
-// PDF: stilli HTML'i yeni pencerede açıp yazdır → kullanıcı "PDF olarak kaydet".
-function exportAsPdf(md: string) {
-  const win = window.open("", "_blank", "width=840,height=920");
-  if (!win) return;
-  win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${docTitle(md)}</title><style>${DOC_CSS}</style></head><body>${mdToHtml(md)}</body></html>`);
-  win.document.close();
-  win.focus();
-  setTimeout(() => win.print(), 400);
+// Dosya adı: Türkçe/Unicode harfleri KORUR (\w ö/ü/ç/ş/ğ/ı'yı silip alt çizgi yapıyordu).
+function safeFileName(md: string, ext: string): string {
+  const base = docTitle(md)
+    .replace(/[^\p{L}\p{N}._ -]+/gu, "")
+    .trim()
+    .replace(/\s+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_|_$/g, "") || "belge";
+  return `${base}.${ext}`;
+}
+
+// PDF: stilli HTML'i html2pdf ile GERÇEK bir .pdf dosyasına döküp indirir
+// (Türkçe karakterler doğru render olur; jsPDF'in standart fontu Türkçe'yi bozuyordu).
+async function exportAsPdf(md: string) {
+  const { default: html2pdf } = await import("html2pdf.js"); // ağır kütüphane — sadece tıklayınca yüklenir
+  // STRING modu: container'ı html2pdf kendi konumlandırır (manuel ekran-dışı koyunca html2canvas
+  // BOŞ yakalıyordu). AÇIK renkleri açıkça ver (koyu tema mirası → beyaz-üstü-beyaz boş PDF'i önler).
+  const html =
+    `<div style="color:#1a1a1a;background:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.65;padding:24px 30px;width:720px;">` +
+    mdToHtml(md) +
+    `</div>`;
+  try {
+    await html2pdf()
+      .set({
+        filename: safeFileName(md, "pdf"),
+        margin: [12, 12, 12, 12],
+        image: { type: "jpeg", quality: 0.98 },
+        html2canvas: { scale: 2, backgroundColor: "#ffffff", useCORS: true },
+        jsPDF: { unit: "mm", format: "a4", orientation: "portrait" }
+      })
+      .from(html, "string")
+      .save();
+  } catch (err) {
+    console.error("[Orkestra] PDF oluşturulamadı:", err);
+  }
+}
+
+// Markdown: ham içeriği .md olarak indir.
+function exportAsMd(md: string) {
+  const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = safeFileName(md, "md");
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
 // Word: HTML tabanlı .doc indir (Word açar, düzenlenebilir).
@@ -1016,18 +1067,126 @@ function exportAsWord(md: string) {
   const blob = new Blob(["﻿", html], { type: "application/msword" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = `${docTitle(md).replace(/[^\w.-]+/g, "_") || "belge"}.doc`;
+  a.download = safeFileName(md, "doc");
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
-// Kullanıcı mesajı bir belge/dosya çıktısı mı istiyor? (Word/PDF indir butonunu öne çıkarmak için.)
-function docExportIntent(msg: string): { word: boolean; pdf: boolean } {
+// Markdown'ı düz metne indirger (txt için).
+function stripMd(md: string): string {
+  return md
+    .replace(/^#+\s*/gm, "")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1$2")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1")
+    .replace(/^```.*$/gm, "");
+}
+
+function downloadBlob(content: BlobPart, type: string, filename: string) {
+  const blob = new Blob([content], { type });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+// TXT: düz metin indir.
+function exportAsTxt(md: string) {
+  downloadBlob(stripMd(md), "text/plain;charset=utf-8", safeFileName(md, "txt"));
+}
+
+// İçeriği elektronik tablo satırlarına çevirir: markdown tablosu varsa onu; yoksa başlık + her satır bir hücre.
+function mdToRows(md: string): string[][] {
+  const lines = md.replace(/\r\n/g, "\n").split("\n");
+  const tableRows = lines.filter((l) => l.includes("|") && l.trim());
+  if (tableRows.length >= 2 && /^\s*\|?[\s:|-]+\|/.test(tableRows[1] ?? "")) {
+    return tableRows
+      .filter((l) => !/^\s*\|?[\s:|-]+\|?\s*$/.test(l))
+      .map((l) => l.replace(/^\s*\||\|\s*$/g, "").split("|").map((c) => stripMd(c).trim()));
+  }
+  return lines.map((l) => stripMd(l).trim()).filter((l) => l).map((l) => [l]);
+}
+
+// Excel: HTML tablo tabanlı .xls (Excel açar). Sıfır bağımlılık.
+function exportAsExcel(md: string) {
+  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const rows = mdToRows(md);
+  const body = rows.map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join("")}</tr>`).join("");
+  const html = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:x='urn:schemas-microsoft-com:office:excel'><head><meta charset='utf-8'></head><body><table border='1'>${body}</table></body></html>`;
+  downloadBlob("﻿" + html, "application/vnd.ms-excel", safeFileName(md, "xls"));
+}
+
+// Kullanıcı mesajı bir belge/dosya çıktısı mı istiyor + hangi format?
+function docExportIntent(msg: string): { md: boolean; txt: boolean; word: boolean; pdf: boolean; excel: boolean } {
   const m = (msg || "").toLocaleLowerCase("tr");
-  if (!/(ver|indir|oluştur|hazırla|kaydet|olarak|yap)/.test(m)) return { word: false, pdf: false };
-  const word = /(word|docx?|belge|doküman|dosya)/.test(m);
+  if (!/(ver|indir|oluştur|hazırla|kaydet|olarak|yap)/.test(m)) return { md: false, txt: false, word: false, pdf: false, excel: false };
+  const md = /(\bmd\b|markdown|\.md)/.test(m);
+  const txt = /(\btxt\b|\.txt|düz metin)/.test(m);
   const pdf = /\bpdf\b/.test(m);
-  return { word, pdf };
+  const excel = /(excel|xlsx?|elektronik tablo|spreadsheet|tablo)/.test(m);
+  // Word: açıkça word/docx/belge/doküman; ya da format belirtmeden sadece "dosya" dediyse varsayılan.
+  const word = /(word|docx?|belge|doküman)/.test(m) || (/dosya/.test(m) && !md && !txt && !pdf && !excel);
+  return { md, txt, word, pdf, excel };
+}
+
+// Açık "kodlamaya aktar" komutu mu? (deterministik tetikleyici — model kararı beklemeden)
+function transferCommandIntent(msg: string): boolean {
+  const m = (msg || "").toLocaleLowerCase("tr");
+  return /(kodlama(ya)?\s*(at|geç|gec|aktar|moduna)|koda\s*(geç|gec|aktar|at)|bunu\s*kodla|kodlamaya\s*başla|\bbuild\b)/.test(m);
+}
+
+// Modelin yetenek sırası (en gelişmiş operatör/varsayılan seçimi için).
+function modelRank(modelId: string, modelLabel: string): number {
+  const s = `${modelId} ${modelLabel}`.toLowerCase();
+  if (/opus/.test(s)) return 100;
+  if (/sonnet/.test(s)) return 90;
+  if (/gpt-?5|o3|o1[- ]?pro/.test(s)) return 85;
+  if (/gemini.*(2\.5|3).*pro|gemini.*pro/.test(s)) return 80;
+  if (/gpt-?4|codex/.test(s)) return 70;
+  if (/mini|flash|haiku|oss|nano|lite|low/.test(s)) return 40;
+  return 55;
+}
+
+type DocIntent = ReturnType<typeof docExportIntent>;
+
+// Önizlemeli belge artifact kartı (ChatGPT/Claude tarzı): başlık + indir + içerik önizleme.
+function DocArtifact({ content, intent, language }: { content: string; intent: DocIntent; language: Language }) {
+  const text = uiText[language];
+  const [open, setOpen] = useState(true);
+  const ext = intent.excel ? "xlsx" : intent.pdf ? "pdf" : intent.md ? "md" : intent.txt ? "txt" : "docx";
+  const name = safeFileName(content, ext);
+  const rows = intent.excel ? mdToRows(content) : null;
+  return (
+    <div className="artifactCard">
+      <div className="artifactHead">
+        <FileText size={15} className="artifactIcon" />
+        <span className="artifactName">{name}</span>
+        <div className="artifactActions">
+          {intent.md && <button onClick={() => exportAsMd(content)} title={text.exportMd}><Download size={14} /> md</button>}
+          {intent.txt && <button onClick={() => exportAsTxt(content)} title={text.exportTxt}><Download size={14} /> txt</button>}
+          {intent.excel && <button onClick={() => exportAsExcel(content)} title={text.exportExcel}><Download size={14} /> xls</button>}
+          {intent.pdf && <button onClick={() => void exportAsPdf(content)} title={text.exportPdf}><Download size={14} /> pdf</button>}
+          {intent.word && <button onClick={() => exportAsWord(content)} title={text.exportWord}><Download size={14} /> doc</button>}
+          <button className="artifactToggle" onClick={() => setOpen((o) => !o)} title={open ? text.collapseCard : text.expandCard}>
+            {open ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+          </button>
+        </div>
+      </div>
+      {open && (
+        <div className="artifactBody">
+          {rows ? (
+            <table className="artifactTable"><tbody>{rows.map((r, ri) => (
+              <tr key={ri}>{r.map((c, ci) => (<td key={ci}>{c}</td>))}</tr>
+            ))}</tbody></table>
+          ) : (
+            <div className="artifactDoc" dangerouslySetInnerHTML={{ __html: mdToHtml(content) }} />
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 type StoredConversation = { id: string; title: string; messages: ChatMessage[]; updatedAt: string; workspacePath?: string | null; projectId?: string | null; codingActive?: boolean; phasePendingRunId?: string | null; lastRunId?: string | null };
@@ -2013,11 +2172,16 @@ function App() {
 
   // Tartışma sonrası operatör analizi. KESİN görünürlük: önce ANINDA turlardan bir kart eklenir,
   // sonra gerçek analiz gelince aynı kart GÜNCELLENİR. Backend ne yaparsa yapsın kart görünür.
-  async function fetchOperatorAnalysis(message: string, turns: { cli?: string; modelLabel?: string; content?: string }[]) {
-    const op = operatorSel ?? participants[0];
+  async function fetchOperatorAnalysis(
+    message: string,
+    turns: { cli?: string; modelLabel?: string; content?: string }[],
+    opts?: { operator?: { cli: DebateParticipant; model: string }; participants?: { cli: DebateParticipant; model: string }[]; convoId?: string }
+  ) {
+    const op = opts?.operator ?? operatorSel ?? participants[0];
     if (!op) return;
+    const parts = opts?.participants ?? participants;
     // Bu analiz hangi oturuma ait? Async bittiğinde kullanıcı başka projeye geçmişse YAZMA (sızma önlenir).
-    const ownerConvo = codeConvoIdRef.current;
+    const ownerConvo = opts?.convoId ?? codeConvoIdRef.current;
     const stillHere = () => codeConvoIdRef.current === ownerConvo;
     const opLabel = labelForAgent(op.cli, op.model);
     if (!stillHere()) return;
@@ -2030,7 +2194,7 @@ function App() {
         api.post<{ content: string; modelLabel: string }>("/api/analyze", {
           message,
           turns,
-          participants: participants.map((p) => ({ cli: p.cli, model: p.model === "default" ? undefined : p.model })),
+          participants: parts.map((p) => ({ cli: p.cli, model: p.model === "default" ? undefined : p.model })),
           operator: { cli: op.cli, model: op.model === "default" ? undefined : op.model },
           effort: selectedEffort
         }),
@@ -2076,6 +2240,13 @@ function App() {
     const content = (overrideText ?? chatInput).trim();
     const pending = attachments;
     if ((!content && !pending.length) || isThinking) return;
+    // Katman 2: açık "kodlamaya aktar" komutu → modele sormadan deterministik aktarım (yalnızca sohbette).
+    if (activeView === "chat" && content && transferCommandIntent(content)) {
+      setChatInput("");
+      setAttachments([]);
+      void transferToCode();
+      return;
+    }
     setNotice(null);
     setSuggestedPrompt(null);
     setCodeDebateDone(false);
@@ -2142,7 +2313,13 @@ function App() {
           createdAt: message.createdAt ?? new Date().toISOString()
         }))
       ]);
-      if (response.action === "suggest_pipeline") setSuggestedPrompt(response.suggestedPrompt ?? content);
+      // Katman 3: otomatik "Proje algılandı" kartı — ama BELGE isteğinde gösterme (cv/pdf/word/şiir ≠ proje).
+      {
+        const di = docExportIntent(content);
+        if (response.action === "suggest_pipeline" && !di.md && !di.txt && !di.word && !di.pdf && !di.excel) {
+          setSuggestedPrompt(response.suggestedPrompt ?? content);
+        }
+      }
       // Sohbet modunda: model(ler) cevabını bitirdi → bildir (pencere odakta değilse).
       if (activeView === "chat" && !response.error) void showNotify({
         title: text.notifChatDoneTitle,
@@ -2335,6 +2512,31 @@ function App() {
     );
   }
 
+  // En gelişmiş mevcut model (operatör varsayılanı için).
+  function mostAdvancedAgent(): { cli: DebateParticipant; model: string } | null {
+    let best: { cli: DebateParticipant; model: string } | null = null;
+    let bestScore = -1;
+    for (const s of participantSources) {
+      for (const m of s.models) {
+        if (m.limited || m.id === "default") continue;
+        const score = modelRank(m.id, m.label);
+        if (score > bestScore) { bestScore = score; best = { cli: s.cli, model: m.id }; }
+      }
+    }
+    return best ?? firstAvailableAgents()[0] ?? null;
+  }
+
+  // Sohbetten code Tartışma'ya taşınacak katılımcılar: her doğrulanmış CLI'nin en iyi (isimli) modeli.
+  function deriveParticipants(): { cli: DebateParticipant; model: string }[] {
+    return participantSources
+      .map((s) => {
+        const named = s.models.filter((m) => m.id !== "default" && !m.limited);
+        const best = named[0] ?? s.models.find((m) => !m.limited);
+        return best ? { cli: s.cli, model: best.id } : null;
+      })
+      .filter((x): x is { cli: DebateParticipant; model: string } => Boolean(x));
+  }
+
   // CLI+model için okunur etiket (Ekip Çalışması görev başlıklarında).
   function labelForAgent(cli: DebateParticipant, model: string) {
     const src = participantSources.find((s) => s.cli === cli);
@@ -2476,6 +2678,66 @@ function App() {
   }
 
   // Brief oluşturmadan, mevcut sohbette karar verilen işi doğrudan pipeline'a başlatır.
+  // Sohbet → Code köprüsü (deterministik). Mod eşlemesi:
+  //  Tek Ajan → Code Tek Ajan (brief → o ajan kodlar). Tartışma/Çoklu → Code Tartışma
+  //  (katılımcılar taşınır, operatör = son seçili ya da en gelişmiş → operatör analizi + aksiyon kartı).
+  async function transferToCode() {
+    const userMsgs = messages.filter((m) => m.role === "user" && m.id !== "welcome" && m.content.trim());
+    if (!userMsgs.length) {
+      console.error("[Orkestra] Aktarmadan önce sohbette bir konu olmalı.");
+      return;
+    }
+    const sourceMode = mode;
+    const goal = goalFromConversation();
+    const carried = messages.filter((m) => m.id !== "welcome");
+    const newConvoId = crypto.randomUUID();
+
+    // Code moduna geç + temiz oturum; sohbeti bağlam olarak taşı.
+    setActiveView("code");
+    setCodeConvoId(newConvoId);
+    codeConvoIdRef.current = newConvoId;
+    setActiveRun(null);
+    setEvents([]);
+    setStreamItems([]);
+    setPhasePending(null);
+    setLastAnalysis(null);
+    setCodeMessages(carried);
+    setSuggestedPrompt(null);
+
+    if (sourceMode === "single") {
+      setMode("single");
+      setCodingActive(true);
+      let brief = goal;
+      try {
+        const res = await api.post<{ brief: string }>("/api/brief", { history: carried, planner: singleCli });
+        if (res.brief?.trim()) brief = res.brief.trim();
+      } catch { /* fallback: goal */ }
+      // Seçili tek ajanla doğrudan kodlamaya başla (1 görevlik run).
+      const run = await api.post<Run>("/api/runs", {
+        prompt: brief,
+        tasks: [{ id: "task1", title: userMsgs[0].content.slice(0, 80) || "Görev", role: "builder", folder: "", dependsOn: [], cli: singleCli, model: selectedModel === "default" ? undefined : selectedModel }],
+        workspacePath: projectWorkspace ?? undefined
+      });
+      setActiveRun(run);
+      setProjectWorkspace(run.workspacePath);
+      ensureProject(run.workspacePath, deriveTitle(carried));
+      await refresh();
+    } else {
+      // Tartışma / Çoklu → Code Tartışma.
+      setMode("debate");
+      setCodingActive(false);
+      const parts = participants.length ? participants : deriveParticipants();
+      if (!participants.length) setParticipants(parts);
+      const op = operatorSel ?? mostAdvancedAgent();
+      if (op && !operatorSel) setOperatorSel(op);
+      // Operatör analizi: chat turn'lerinden → analiz kartı + aksiyon kartı.
+      const turns = carried
+        .filter((m) => m.role === "assistant" && m.planner !== "system" && m.content.trim())
+        .map((m) => ({ cli: undefined, modelLabel: m.modelLabel, content: m.content }));
+      await fetchOperatorAnalysis(goal, turns, { operator: op ?? undefined, participants: parts, convoId: newConvoId });
+    }
+  }
+
   function startFromChat() {
     const convo = messages.filter((m) => m.id !== "welcome" && m.content.trim());
     if (!convo.length) {
@@ -2820,6 +3082,7 @@ function App() {
                     setAttachments([]);
                   }}
                   onCreateBrief={() => void createBrief()}
+                  onTransferToCode={() => void transferToCode()}
                   onDismissPipeline={() => setSuggestedPrompt(null)}
                 />
               </div>
@@ -3807,6 +4070,7 @@ function ChatPanel({
   onSend,
   onClear,
   onCreateBrief,
+  onTransferToCode,
   onDismissPipeline
 }: {
   language: Language;
@@ -3846,6 +4110,7 @@ function ChatPanel({
   onSend: (text?: string) => void;
   onClear: () => void;
   onCreateBrief: () => void;
+  onTransferToCode?: () => void;
   onDismissPipeline: () => void;
 }) {
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -3932,8 +4197,8 @@ function ChatPanel({
           const prevUser = message.role === "assistant"
             ? [...messages.slice(0, i)].reverse().find((m) => m.role === "user")
             : undefined;
-          const intent = prevUser ? docExportIntent(prevUser.content) : { word: false, pdf: false };
-          const showDocBar = message.role === "assistant" && message.content.trim().length > 40 && (intent.word || intent.pdf);
+          const intent = prevUser ? docExportIntent(prevUser.content) : { md: false, txt: false, word: false, pdf: false, excel: false };
+          const showArtifact = message.role === "assistant" && message.content.trim().length > 40 && (intent.md || intent.txt || intent.word || intent.pdf || intent.excel);
           return (
           <article key={message.id ?? `${message.role}-${message.createdAt}`} className={`chatBubble ${message.role} compact`}>
             {message.role === "assistant" && (
@@ -3942,39 +4207,16 @@ function ChatPanel({
                 <span>{message.modelLabel ?? "Orkestra"}</span>
               </div>
             )}
-            {showDocBar && (
-              <div className="docArtifactBar">
-                <FileText size={15} />
-                <span className="docArtifactTitle">{docTitle(message.content)}</span>
-                {(intent.word || (!intent.word && !intent.pdf)) && (
-                  <button className="docArtifactDl" onClick={() => exportAsWord(message.content)}>
-                    <Download size={13} /> {text.exportWord}
-                  </button>
-                )}
-                {intent.pdf && (
-                  <button className="docArtifactDl" onClick={() => exportAsPdf(message.content)}>
-                    <Download size={13} /> {text.exportPdf}
-                  </button>
-                )}
-              </div>
-            )}
-            <pre>{message.content}</pre>
+            {showArtifact
+              ? <DocArtifact content={message.content} intent={intent} language={language} />
+              : <pre>{message.content}</pre>}
             <div className="bubbleFooter">
               {message.createdAt && <time>{new Date(message.createdAt).toLocaleTimeString("tr-TR")}</time>}
               <CopyButton value={message.content} label={text.copyMessage} copiedLabel={text.copied} />
-              {message.role === "assistant" && message.content.trim().length > 40 && (
-                <>
-                  <button className="bubbleExportBtn" onClick={() => exportAsPdf(message.content)} title={text.exportPdf}>
-                    <FileText size={12} /> PDF
-                  </button>
-                  <button className="bubbleExportBtn" onClick={() => exportAsWord(message.content)} title={text.exportWord}>
-                    <FileText size={12} /> Word
-                  </button>
-                </>
-              )}
             </div>
           </article>
-        ))}
+          );
+        })}
         {thinking && (
           <article className="chatBubble assistant thinking compact">
             <div className="messageMeta">
@@ -4007,24 +4249,31 @@ function ChatPanel({
       </div>
 
       <div className="composerArea">
-        <div className="modeSwitch compact">
-          {(["single", "multi", "debate"] as ChatMode[]).map((item) => {
-            const disabled = item !== "single" && !multiAvailable;
-            return (
-              <button
-                key={item}
-                className={`modeTab${mode === item ? " on" : ""}${item === "debate" ? " debate" : ""}`}
-                disabled={disabled}
-                onClick={() => onModeChange(item)}
-              >
-                {item === "single" && <Bot size={14} />}
-                {item === "multi" && <Users size={14} />}
-                {item === "debate" && <Swords size={14} />}
-                {modeMeta[item].label}
-                <span className="modeTip">{disabled ? text.needsTwoCli : modeMeta[item].desc}</span>
-              </button>
-            );
-          })}
+        <div className="composerTopRow">
+          <div className="modeSwitch compact">
+            {(["single", "multi", "debate"] as ChatMode[]).map((item) => {
+              const disabled = item !== "single" && !multiAvailable;
+              return (
+                <button
+                  key={item}
+                  className={`modeTab${mode === item ? " on" : ""}${item === "debate" ? " debate" : ""}`}
+                  disabled={disabled}
+                  onClick={() => onModeChange(item)}
+                >
+                  {item === "single" && <Bot size={14} />}
+                  {item === "multi" && <Users size={14} />}
+                  {item === "debate" && <Swords size={14} />}
+                  {modeMeta[item].label}
+                  <span className="modeTip">{disabled ? text.needsTwoCli : modeMeta[item].desc}</span>
+                </button>
+              );
+            })}
+          </div>
+          {onTransferToCode && messages.some((m) => m.role === "user" && m.id !== "welcome") && (
+            <button className="transferToCodeBtn" onClick={onTransferToCode} title={text.transferToCodeTitle}>
+              <Code size={14} /> {text.transferToCode}
+            </button>
+          )}
         </div>
         {(mode === "debate" || mode === "multi") && (
           <div className="debateControls">
