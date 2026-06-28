@@ -697,11 +697,21 @@ function quoteWindowsShellArg(value: string) {
   return `"${text.replaceAll('"', '\\"')}"`;
 }
 
+// Kullanıcının dilini tespit edip yanıt/açıklama dilini ona göre dayatır (EN/TR).
+function agentLangDirective(text: string): string {
+  const t = (text || "").toLowerCase();
+  const tr = /[çğıİöşü]/i.test(text) || /\b(ve|bir|için|bu|şu|ben|sen|yap|oluştur|merhaba|nasıl|değil|var|yok|lütfen|site|proje|kod|yaz|selam)\b/.test(t);
+  return tr
+    ? "ÖNEMLİ DİL KURALI: Açıklamalarını/özetlerini/mesajlarını TAMAMEN Türkçe yaz."
+    : "CRITICAL LANGUAGE RULE: Write all your explanations, summaries and messages in English. Do not use Turkish.";
+}
+
 function buildAgentPrompt(prompt: string, agent: Agent, transcript: string, notes: string[] = []) {
   const noteBlock = notes.length
     ? `\n\nKULLANICI ARA TALİMATLARI (mutlaka dikkate al):\n${notes.map((n) => `- ${n}`).join("\n")}`
     : "";
   return [
+    agentLangDirective(prompt),
     `User task:\n${prompt}${noteBlock}`,
     "",
     `Your role: ${agent.role} / ${agent.name}`,
@@ -709,8 +719,7 @@ function buildAgentPrompt(prompt: string, agent: Agent, transcript: string, note
     "Previous agent transcript:",
     transcript || "No previous messages.",
     "",
-    "Respond with concrete progress for your role. Keep output concise and actionable.",
-    "LANGUAGE: write your explanations, summaries and user-facing messages in the SAME language as the user task above (English→English, Turkish→Turkish). Mirror the user's language."
+    "Respond with concrete progress for your role. Keep output concise and actionable."
   ].join("\n");
 }
 

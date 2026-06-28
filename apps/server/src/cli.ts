@@ -646,9 +646,24 @@ async function runClaude(prompt: string, model?: string, effort?: EffortLevel) {
   return runTool("claude", args, prompt, claudeTimeoutMs);
 }
 
+// Kullanıcının mesaj dilini tespit eder (EN/TR) — yanıtın AYNI dilde olması için.
+export function detectLang(text: string): "en" | "tr" {
+  const t = (text || "").toLowerCase();
+  if (/[çğıİöşü]/i.test(text)) return "tr";
+  if (/\b(ve|bir|için|bu|şu|ben|sen|yap|oluştur|merhaba|nasıl|değil|var|yok|lütfen|site|proje|kod|yaz|selam|teşekkür)\b/.test(t)) return "tr";
+  return "en";
+}
+// Prompt'un EN BAŞINA konacak güçlü dil direktifi (Türkçe sistem-prompt'una rağmen baskın olsun).
+function langDirective(text: string): string {
+  return detectLang(text) === "tr"
+    ? "ÖNEMLİ DİL KURALI: Yanıtının TAMAMINI Türkçe yaz."
+    : "CRITICAL LANGUAGE RULE: Write your ENTIRE response in English. Do not use Turkish.";
+}
+
 async function buildClaudePrompt(message: string, history: ChatMessage[], detailLevel?: "low" | "medium" | "high", preHistory?: string) {
   const formattedHistory = preHistory ?? await formatHistoryWithDetail(history, detailLevel);
   return [
+    langDirective(message),
     "Sen Orkestra'nın planlayıcı ajanısın; bu bir sohbet oturumudur, kod tabanına müdahale etme.",
     "Aşağıdaki konuşma geçmişini dikkate al — geçmişte senin dışında Gemini ve Codex gibi başka AI'lar da yanıt vermiş olabilir, onların söylediklerini de bağlam olarak kullan.",
     "cwd'deki proje dosyalarını veya hafızayı bağlam alma.",
@@ -796,9 +811,11 @@ export async function analyzeDebate(
   turns: DebateTurn[],
   model?: string,
   effort?: EffortLevel,
-  lang: "en" | "tr" = "tr"
+  lang?: "en" | "tr"
 ): Promise<{ content: string; modelLabel: string }> {
-  const analysisPrompt = buildOperatorAnalysisPrompt(message, turns, lang);
+  // Girdi dilini önceliklendir (kullanıcı ne yazdıysa o dilde analiz); yoksa geçilen dili kullan.
+  const useLang: "en" | "tr" = detectLang(message) || lang || "tr";
+  const analysisPrompt = buildOperatorAnalysisPrompt(message, turns, useLang);
   const isValid = (a: string) =>
     !!a && a.trim().length > 30 &&
     !/okunamad|yanıt vermedi|zaman aşımı|üretemedi|bulunamadı|Usage of agy|flag needs an argument|Available subcommands/i.test(a);
@@ -816,7 +833,7 @@ export async function analyzeDebate(
   // operatör agy yavaşsa claude/codex paralel döner). Hepsi başarısızsa ya da 70sn aşılırsa fallback.
   const backup = participants.find((p) => p.cli !== operator.cli);
   const candidates = backup ? [operator, backup] : [operator];
-  const fallback = { content: buildFallbackAnalysis(message, turns, lang), analyst: operator };
+  const fallback = { content: buildFallbackAnalysis(message, turns, useLang), analyst: operator };
 
   const winner = await new Promise<{ content: string; analyst: Participant }>((resolve) => {
     let pending = candidates.length;
@@ -892,6 +909,7 @@ async function buildDebatePromptWithDetail(
   }
 
   return [
+    langDirective(message),
     `Sen ${speakerLabel} olarak Orkestra'da bir KURUL TARTIŞMASInın katılımcısısın.`,
     `Diğer katılımcılar: ${others}. Tur ${round}/${totalRounds}.`,
     "Amaç birlikte en iyi kararı bulmak. Diğer ajanların söylediklerine DOĞRUDAN cevap ver: katıldığın/katılmadığın noktaları belirt, eksikleri tamamla, alternatif sun.",
@@ -1371,6 +1389,7 @@ async function buildContextWithCache(
 async function buildPlannerPrompt(message: string, history: ChatMessage[], detailLevel?: "low" | "medium" | "high", preHistory?: string) {
   const formattedHistory = preHistory ?? await formatHistoryWithDetail(history, detailLevel);
   return [
+    langDirective(message),
     "Sadece Orkestra chat gecmisini dikkate al; eski CLI/proje oturum baglamindan devam etme.",
     "Sen Orkestra'nın planlayıcı ajanısın. Geçmişte başka AI'lar (Claude, Gemini, Codex) da yanıt vermiş olabilir; onların mesajlarını da bağlam al.",
     "Kullanıcı sohbet ederse kısa ve doğal yanıt ver.",
