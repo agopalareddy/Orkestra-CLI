@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/logo.png" alt="Orkestra logo" width="140" />
+  <img src="apps/web/public/logo.png" alt="Orkestra logo" width="140" />
 </p>
 
 <h1 align="center">Orkestra</h1>
