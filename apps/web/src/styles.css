@@ -4746,6 +4746,13 @@ textarea:focus {
   text-decoration: underline;
 }
 
+.limitNoData {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
 /* Composer "+" menüsü */
 .attachWrap {
   position: relative;

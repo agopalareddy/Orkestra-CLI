@@ -242,7 +242,8 @@ const uiText = {
     geminiVerified: "Antigravity verified",
     verified: "Verified",
     resets: "resets",
-    staleUsage: "Warning: stale data - waiting for cligate update",
+    staleUsage: "Showing cached usage (refreshing…)",
+    limitNoCliData: "Usage isn't exposed by this CLI — visible inside its IDE.",
     now: "now",
     minLater: "min later",
     hLater: "h",
@@ -641,7 +642,8 @@ const uiText = {
     geminiVerified: "Antigravity doğrulandı",
     verified: "Doğrulandı",
     resets: "sıfırlanır",
-    staleUsage: "Veri eski - cligate güncellemesi bekleniyor",
+    staleUsage: "Önbellekten gösteriliyor (yenileniyor…)",
+    limitNoCliData: "Kullanım bu CLI'dan okunamıyor — IDE içinde görünür.",
     now: "şimdi",
     minLater: "dk sonra",
     hLater: "sa",
@@ -1334,10 +1336,8 @@ function deriveTitle(messages: ChatMessage[]) {
 }
 
 function App() {
-  const [theme, setTheme] = useState<"light" | "dark">(() => {
-    const saved = localStorage.getItem("orkestra.theme");
-    return saved === "dark" ? "dark" : "light";
-  });
+  // Light modu kaldırıldı — uygulama her zaman dark. (Eski "light" kaydı yok sayılır.)
+  const [theme, setTheme] = useState<"light" | "dark">("dark");
 
   const [activeView, setActiveView] = useState<"chat" | "code">(() =>
     localStorage.getItem("orkestra.activeView") === "code" ? "code" : "chat"
@@ -2402,6 +2402,16 @@ function App() {
     const lines = turns
       .filter((t) => t.content?.trim())
       .map((t) => `- **${t.modelLabel ?? t.cli ?? "Ajan"}**: ${t.content!.trim().replace(/\s+/g, " ").slice(0, 280)}`);
+    if (language === "en") {
+      return [
+        "## Shared View",
+        "Automatic operator analysis was unavailable; participant views are compiled below.",
+        "## Unique Ideas",
+        ...lines,
+        "## Recommended Approach",
+        `- Implement "${message}" by combining the common points of the views above.`
+      ].join("\n");
+    }
     return [
       "## Ortak Görüş",
       "Operatör otomatik analizi alınamadı; katılımcı görüşleri aşağıda derlenmiştir.",
@@ -2438,7 +2448,8 @@ function App() {
           turns,
           participants: parts.map((p) => ({ cli: p.cli, model: p.model === "default" ? undefined : p.model })),
           operator: { cli: op.cli, model: op.model === "default" ? undefined : op.model },
-          effort: selectedEffort
+          effort: selectedEffort,
+          language
         }),
         new Promise<never>((_, reject) => setTimeout(() => reject(new Error("analyze-timeout")), 85_000))
       ]);
@@ -3881,13 +3892,6 @@ function SetupWizard({
                   <button className={language === "tr" ? "active" : ""} onClick={() => onSetLanguage("tr")}>TR</button>
                 </div>
               </div>
-              <div className="wizardField">
-                <label>{text.theme}</label>
-                <div className="wizardThemeToggle">
-                  <button className={theme === "light" ? "active" : ""} onClick={() => onSetTheme("light")}><Sun size={15} /> {text.lightMode}</button>
-                  <button className={theme === "dark" ? "active" : ""} onClick={() => onSetTheme("dark")}><Moon size={15} /> {text.darkMode}</button>
-                </div>
-              </div>
             </div>
           )}
 
@@ -4390,13 +4394,6 @@ function SettingsDialog({
               <button className={language === "tr" ? "active" : ""} onClick={() => onSetLanguage("tr")}>TR</button>
             </div>
           </div>
-          <div className="settingsRow">
-            <label>{text.theme}</label>
-            <div className="wizardThemeToggle">
-              <button className={theme === "light" ? "active" : ""} onClick={() => onSetTheme("light")}><Sun size={15} /> {text.lightMode}</button>
-              <button className={theme === "dark" ? "active" : ""} onClick={() => onSetTheme("dark")}><Moon size={15} /> {text.darkMode}</button>
-            </div>
-          </div>
 
           <div className="settingsSection">
             <div className="settingsSectionHead">
@@ -4434,26 +4431,30 @@ function SettingsDialog({
               <span>{text.limitsTitle}</span>
               <button className="iconButton" onClick={onRefresh} title={text.refresh}><RefreshCw size={14} /></button>
             </div>
-            {tools.filter((t) => t.usage?.windows?.length).length === 0 ? (
+            {tools.filter((t) => t.installed).length === 0 ? (
               <p className="limitPopupEmpty">{text.readingCli}</p>
             ) : (
-              tools.filter((t) => t.usage?.windows?.length).map((t) => (
+              tools.filter((t) => t.installed).map((t) => (
                 <div className="limitPopupRow" key={t.id}>
                   <div className="limitPopupName">
                     <span className={`agentIcon ${t.id}`}>{iconForTool(t.id)}</span>
                     <strong>{displayToolName(t.id)}</strong>
                   </div>
-                  {t.usage!.windows.map((w) => (
-                    <div className="limitMini" key={w.label}>
-                      <div className="limitMiniHead"><span>{w.label}</span><span>%{w.usedPercent}</span></div>
-                      <div className="limitMiniTrack">
-                        <div
-                          className={`limitMiniFill${w.usedPercent >= 90 ? " danger" : w.usedPercent >= 60 ? " warn" : ""}`}
-                          style={{ width: `${w.usedPercent}%` }}
-                        />
+                  {t.usage?.windows?.length ? (
+                    t.usage.windows.map((w) => (
+                      <div className="limitMini" key={w.label}>
+                        <div className="limitMiniHead"><span>{w.label}</span><span>%{w.usedPercent}</span></div>
+                        <div className="limitMiniTrack">
+                          <div
+                            className={`limitMiniFill${w.usedPercent >= 90 ? " danger" : w.usedPercent >= 60 ? " warn" : ""}`}
+                            style={{ width: `${w.usedPercent}%` }}
+                          />
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    ))
+                  ) : (
+                    <p className="limitNoData">{text.limitNoCliData}</p>
+                  )}
                 </div>
               ))
             )}

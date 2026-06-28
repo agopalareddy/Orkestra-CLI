@@ -795,9 +795,10 @@ export async function analyzeDebate(
   message: string,
   turns: DebateTurn[],
   model?: string,
-  effort?: EffortLevel
+  effort?: EffortLevel,
+  lang: "en" | "tr" = "tr"
 ): Promise<{ content: string; modelLabel: string }> {
-  const analysisPrompt = buildOperatorAnalysisPrompt(message, turns);
+  const analysisPrompt = buildOperatorAnalysisPrompt(message, turns, lang);
   const isValid = (a: string) =>
     !!a && a.trim().length > 30 &&
     !/okunamad|yanıt vermedi|zaman aşımı|üretemedi|bulunamadı|Usage of agy|flag needs an argument|Available subcommands/i.test(a);
@@ -815,7 +816,7 @@ export async function analyzeDebate(
   // operatör agy yavaşsa claude/codex paralel döner). Hepsi başarısızsa ya da 70sn aşılırsa fallback.
   const backup = participants.find((p) => p.cli !== operator.cli);
   const candidates = backup ? [operator, backup] : [operator];
-  const fallback = { content: buildFallbackAnalysis(message, turns), analyst: operator };
+  const fallback = { content: buildFallbackAnalysis(message, turns, lang), analyst: operator };
 
   const winner = await new Promise<{ content: string; analyst: Participant }>((resolve) => {
     let pending = candidates.length;
@@ -927,8 +928,33 @@ function buildDebateSummaryPrompt(message: string, turns: DebateTurn[]) {
 }
 
 // Operatör: tartışmayı 5 başlıklı yapılandırılmış analize çevirir (Code tartışma modu).
-function buildOperatorAnalysisPrompt(message: string, turns: DebateTurn[]) {
+function buildOperatorAnalysisPrompt(message: string, turns: DebateTurn[], lang: "en" | "tr" = "tr") {
   const transcript = turns.map((turn) => `### ${turn.modelLabel}\n${turn.content}`).join("\n\n");
+  if (lang === "en") {
+    return [
+      "You are the Orkestra OPERATOR. Below is a transcript where multiple AI models discussed a CODING task.",
+      "Your job: analyze these views objectively and output EXACTLY these headings, as Markdown:",
+      "",
+      "## Shared View",
+      "Points all models agree on (bullet points).",
+      "## Points of Disagreement",
+      "Where models conflict/differ; briefly note who says what.",
+      "## Partial Consensus",
+      "Points at least 2 models share but not all agree on.",
+      "## Unique Ideas",
+      "Valuable ideas raised by only a single model (name who).",
+      "## Blind Spots",
+      "Important risks/gaps NO model mentioned but matter for this task — YOU add these.",
+      "",
+      "End with a short '## Recommended Approach' giving the actionable final decision as bullet points.",
+      "Write clearly, concretely, and IN ENGLISH. Do not start a new debate; only analyze.",
+      "",
+      `Coding task: ${message}`,
+      "",
+      "Debate transcript:",
+      transcript
+    ].join("\n");
+  }
   return [
     "Sen Orkestra OPERATÖRÜsün. Aşağıda birden fazla AI modelinin bir KODLAMA görevini tartıştığı kayıt var.",
     "Görevin: bu görüşleri objektif analiz et ve TAM OLARAK şu 5 başlıkla, Markdown olarak ver:",
@@ -956,11 +982,24 @@ function buildOperatorAnalysisPrompt(message: string, turns: DebateTurn[]) {
 
 // Operatör ve yedek ajan da analiz üretemezse: tartışma turlarından doğrudan yapısal
 // bir analiz kartı kurar. Kart her zaman oluşmalı (kritik), boş bırakılmaz.
-function buildFallbackAnalysis(message: string, turns: DebateTurn[]) {
+function buildFallbackAnalysis(message: string, turns: DebateTurn[], lang: "en" | "tr" = "tr") {
   const bySpeaker = turns.map((t) => {
     const text = t.content.replace(/\s+/g, " ").trim();
     return `- **${t.modelLabel}**: ${text.slice(0, 280)}${text.length > 280 ? "…" : ""}`;
   });
+  if (lang === "en") {
+    return [
+      "## Shared View",
+      "Automatic operator analysis could not be produced; participant views are compiled raw below.",
+      "## Points of Disagreement",
+      "(Compare the participant answers to assess.)",
+      "## Unique Ideas",
+      ...bySpeaker,
+      "## Recommended Approach",
+      `- Implement the "${message}" task by combining the common points of the views above.`,
+      "- The operator/team can proceed based on this compilation."
+    ].join("\n");
+  }
   return [
     "## Ortak Görüş",
     "Otomatik operatör analizi üretilemedi; aşağıda katılımcı görüşleri ham olarak derlenmiştir.",

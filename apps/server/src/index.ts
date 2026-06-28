@@ -217,6 +217,7 @@ app.post<{
     operator?: ChatParticipant;
     model?: string;
     effort?: EffortLevel;
+    language?: "en" | "tr";
   };
 }>("/api/analyze", async (request, reply) => {
   const message = request.body.message?.trim();
@@ -236,7 +237,7 @@ app.post<{
     : participants[0];
   if (!op) return reply.code(400).send({ error: "no operator/participant" });
 
-  const result = await analyzeDebate(participants as any, op as any, message, turns, request.body.model, request.body.effort);
+  const result = await analyzeDebate(participants as any, op as any, message, turns, request.body.model, request.body.effort, request.body.language === "en" ? "en" : "tr");
   return result;
 });
 
