@@ -171,23 +171,14 @@ Install [Node.js](https://nodejs.org/) (v20 or higher). You do **not** need to i
 
 > Git is **not** required either — it is bundled (`dugite`).
 
-### Install (recommended — one line)
-
-Once published to npm:
+### Install (one line)
 
 ```bash
 npm install -g orkestra-cli
 orkestra
 ```
 
-Or install straight from GitHub without waiting for a publish:
-
-```bash
-npm install -g github:burakdemir16/Orkestra-CLI
-orkestra
-```
-
-The `orkestra` command starts the local server (serving the built UI) and opens it in your browser at **http://127.0.0.1:8787**. Data and project workspaces are stored under `~/.orkestra`. The setup wizard then walks you through installing/authenticating the CLIs.
+The `orkestra` command starts the local server (serving the built UI) and opens it in your browser at **http://127.0.0.1:8787**. Data and project workspaces are stored under `~/.orkestra`. The setup wizard then walks you through installing/authenticating the CLIs. (Running `orkestra` again while it's already up just reopens the browser.)
 
 > **No compiler needed.** Orkestra installs on any Node 20+ machine without Python or build tools — storage is a dependency-free JSON store and Git is bundled (`dugite`). The integrated terminal uses an optional native module (`node-pty`); if it can't be built on a given machine, the terminal is simply disabled and everything else works.
 
