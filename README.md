@@ -1,4 +1,8 @@
-# 🎹 Orkestra
+<p align="center">
+  <img src="docs/images/logo.png" alt="Orkestra logo" width="140" />
+</p>
+
+<h1 align="center">Orkestra</h1>
 
 [![npm version](https://img.shields.io/npm/v/orkestra-cli.svg)](https://www.npmjs.com/package/orkestra-cli)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
