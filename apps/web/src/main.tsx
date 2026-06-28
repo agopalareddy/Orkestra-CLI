@@ -2965,7 +2965,7 @@ function App() {
     setPhasePending(null);
     setMessages((current) => [
       ...current,
-      { id: crypto.randomUUID(), role: "user", content: "✅ Onaylandı — sıradaki faza devam et.", createdAt: new Date().toISOString() }
+      { id: crypto.randomUUID(), role: "user", content: language === "en" ? "✅ Approved — continue to the next phase." : "✅ Onaylandı — sıradaki faza devam et.", createdAt: new Date().toISOString() }
     ]);
     try {
       await api.post(`/api/runs/${id}/resume`);

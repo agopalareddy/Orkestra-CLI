@@ -11,6 +11,13 @@ import type { EventHub } from "./events";
 // varsayılan 30 dk. ORKESTRA_AGENT_TIMEOUT_SECONDS ile değiştirilebilir.
 const AGENT_TIMEOUT_SECONDS = Math.max(60, Number(process.env.ORKESTRA_AGENT_TIMEOUT_SECONDS ?? 1800));
 
+// Faz/ajan ilerleme mesajlarının dilini, kullanıcının görev metninden (run.prompt) belirler.
+// Böylece UI İngilizce/Türkçe ne ise feed de o dilde akar (resume'da da çalışır).
+function runLang(text: string): "en" | "tr" {
+  const t = (text || "").toLowerCase();
+  return /[çğıİöşü]/i.test(text) || /\b(ve|bir|için|bu|şu|ben|sen|yap|oluştur|merhaba|nasıl|değil|var|yok|lütfen|site|proje|kod|yaz|selam)\b/.test(t) ? "tr" : "en";
+}
+
 // agy çalışmadan ÖNCE workspace'i settings.json'daki trustedWorkspaces'e ekler →
 // agy "Do you trust this folder?" sormadan headless çalışır (interaktif onay gerekmez).
 export function ensureAgyTrusted(workspacePath: string) {
@@ -93,14 +100,17 @@ export class Runner {
     }
     this.controls.set(runId, { notes: [], stop: false, children: new Set() });
     this.store.updateRun(runId, { status: "running", activeStep: `resuming phase ${state.nextPhaseIndex + 1}`, completedAt: null });
-    this.emit(runId, "started", `▶️ Faz ${state.nextPhaseIndex + 1} kaldığı yerden başlatılıyor.`);
+    this.emit(runId, "started", runLang(run.prompt) === "en" ? `▶️ Resuming phase ${state.nextPhaseIndex + 1}.` : `▶️ Faz ${state.nextPhaseIndex + 1} kaldığı yerden başlatılıyor.`);
     void this.runPhasesFrom(run, state.tasks, new Map(state.done ?? []), state.nextPhaseIndex);
     return true;
   }
 
   private async executeTeam(run: Run, tasks: PlanTask[]) {
     this.store.updateRun(run.id, { status: "running", activeStep: "team: planning" });
-    const startMsg = tasks.length === 1 ? "Operatör projeyi yapıyor." : `Ekip çalışması başladı (${tasks.length} görev).`;
+    const lang = runLang(run.prompt);
+    const startMsg = tasks.length === 1
+      ? (lang === "en" ? "Operator is building the project." : "Operatör projeyi yapıyor.")
+      : (lang === "en" ? `Team work started (${tasks.length} tasks).` : `Ekip çalışması başladı (${tasks.length} görev).`);
     this.emit(run.id, "started", startMsg);
     try {
       mkdirSync(run.workspacePath, { recursive: true });
@@ -120,6 +130,8 @@ export class Runner {
   // diske KALICI yazar (.orkestra-phase.json) → durdurma/yeniden başlatma sonrası resume edilebilir.
   private async runPhasesFrom(run: Run, tasks: PlanTask[], done: Map<string, string>, startIndex: number) {
     const control = this.controls.get(run.id);
+    const lang = runLang(run.prompt);
+    const en = lang === "en";
     const clean = (s: string) => s.replace(/\s+/g, " ").trim();
     const phases = [...new Set(tasks.map((t) => t.phase ?? 1))].sort((a, b) => a - b);
     const multiPhase = phases.length > 1;
@@ -128,7 +140,7 @@ export class Runner {
       for (let pi = startIndex; pi < phases.length; pi++) {
         const phaseNo = phases[pi];
         const phaseTasks = tasks.filter((t) => (t.phase ?? 1) === phaseNo);
-        if (multiPhase) this.emit(run.id, "agent_step", `🚀 Faz ${phaseNo}/${phases.length} başlıyor (${phaseTasks.length} görev).`);
+        if (multiPhase) this.emit(run.id, "agent_step", en ? `🚀 Phase ${phaseNo}/${phases.length} starting (${phaseTasks.length} tasks).` : `🚀 Faz ${phaseNo}/${phases.length} başlıyor (${phaseTasks.length} görev).`);
 
         const stopped = await this.executePhaseTasks(run, phaseTasks, done, control);
         if (stopped) {
@@ -144,7 +156,9 @@ export class Runner {
         if (multiPhase && !lastPhase) {
           // İlerlemeyi kalıcı yaz, sonra onay bekle.
           savePhaseState(run.workspacePath, { tasks, done: [...done], nextPhaseIndex: pi + 1 });
-          const report = `✅ Faz ${phaseNo}/${phases.length} tamamlandı:\n${phaseLines}\n\nOnaylıyorsanız sıradaki faza devam edeyim mi?`;
+          const report = en
+            ? `✅ Phase ${phaseNo}/${phases.length} complete:\n${phaseLines}\n\nApprove to continue to the next phase?`
+            : `✅ Faz ${phaseNo}/${phases.length} tamamlandı:\n${phaseLines}\n\nOnaylıyorsanız sıradaki faza devam edeyim mi?`;
           this.store.updateRun(run.id, { activeStep: `phase ${phaseNo} done — awaiting` });
           this.emit(run.id, "phase_done", report);
           await new Promise<void>((resolve) => {
@@ -153,8 +167,8 @@ export class Runner {
           });
           if (control?.stop) {
             // Durdurma: state korunur (sonra "devam et" ile yine açılabilir). Run "stopped" işaretlenir.
-            this.store.updateRun(run.id, { status: "failed", activeStep: "stopped", completedAt: new Date().toISOString(), summary: "Duraklatıldı — 'devam et' ile sürdürülebilir." });
-            this.emit(run.id, "failed", "⏸️ Duraklatıldı. 'Sıradaki faza devam et' ile kaldığı yerden sürebilirsin.");
+            this.store.updateRun(run.id, { status: "failed", activeStep: "stopped", completedAt: new Date().toISOString(), summary: en ? "Paused — resume with 'continue'." : "Duraklatıldı — 'devam et' ile sürdürülebilir." });
+            this.emit(run.id, "failed", en ? "⏸️ Paused. Use 'Continue to next phase' to resume." : "⏸️ Duraklatıldı. 'Sıradaki faza devam et' ile kaldığı yerden sürebilirsin.");
             this.controls.delete(run.id);
             return;
           }
@@ -170,10 +184,13 @@ export class Runner {
       let report: string;
       if (tasks.length === 1) {
         const out = clean(done.get(tasks[0].id) ?? "");
-        report = out ? `✅ Operatör projeyi tamamladı.\n\n${out.slice(0, 700)}` : "✅ Operatör projeyi tamamladı.";
+        const head = en ? "✅ Operator completed the project." : "✅ Operatör projeyi tamamladı.";
+        report = out ? `${head}\n\n${out.slice(0, 700)}` : head;
       } else {
         const lines = tasks.map((t) => `• ${t.title}`).join("\n");
-        report = `✅ Ekip çalışması tamamlandı (${tasks.length} görev):\n${lines}\n\nOnaylıyorsanız yeni bir talimatla devam edebilirim.`;
+        report = en
+          ? `✅ Team work complete (${tasks.length} tasks):\n${lines}\n\nApprove to continue with a new instruction.`
+          : `✅ Ekip çalışması tamamlandı (${tasks.length} görev):\n${lines}\n\nOnaylıyorsanız yeni bir talimatla devam edebilirim.`;
       }
       this.store.updateRun(run.id, { status: "completed", activeStep: "completed", completedAt: new Date().toISOString(), summary: report });
       this.emit(run.id, "completed", report);
@@ -185,26 +202,27 @@ export class Runner {
   // Bir fazın görevlerini bağımlılığa göre (bağımsızlar paralel) çalıştırır.
   // Durdurulduysa true döner.
   private async executePhaseTasks(run: Run, phaseTasks: PlanTask[], done: Map<string, string>, control?: RunControl): Promise<boolean> {
+    const en = runLang(run.prompt) === "en";
     const remaining = [...phaseTasks];
     const phaseIds = new Set(phaseTasks.map((t) => t.id));
     while (remaining.length) {
       if (control?.stop) {
-        this.store.updateRun(run.id, { status: "failed", activeStep: "stopped", completedAt: new Date().toISOString(), summary: "Duraklatıldı — 'devam et' ile sürdürülebilir." });
-        this.emit(run.id, "failed", "⏸️ Duraklatıldı. 'Sıradaki faza devam et' ile kaldığı yerden sürdürebilirsin.");
+        this.store.updateRun(run.id, { status: "failed", activeStep: "stopped", completedAt: new Date().toISOString(), summary: en ? "Paused — resume with 'continue'." : "Duraklatıldı — 'devam et' ile sürdürülebilir." });
+        this.emit(run.id, "failed", en ? "⏸️ Paused. Use 'Continue to next phase' to resume." : "⏸️ Duraklatıldı. 'Sıradaki faza devam et' ile kaldığı yerden sürdürebilirsin.");
         this.controls.delete(run.id);
         return true;
       }
       // Bağımlılıkları (bu faz içinde) tamamlanmış görevler paralel koşar.
       const ready = remaining.filter((t) => (t.dependsOn ?? []).filter((d) => phaseIds.has(d)).every((d) => done.has(d)));
       if (!ready.length) {
-        this.emit(run.id, "failed", "Çözülemeyen görev bağımlılığı (döngü?). Kalan görevler atlandı.");
+        this.emit(run.id, "failed", en ? "Unresolvable task dependency (cycle?). Remaining tasks skipped." : "Çözülemeyen görev bağımlılığı (döngü?). Kalan görevler atlandı.");
         break;
       }
       this.store.updateRun(run.id, { activeStep: `team: ${ready.map((t) => t.id).join(", ")}` });
       const roles = new Set(ready.map((t) => t.role ?? "builder"));
-      if (roles.has("reviewer")) this.emit(run.id, "agent_step", "🔍 Kodlama bitti — kod amaca uygunluk açısından denetleniyor…");
-      else if (roles.has("fixer")) this.emit(run.id, "agent_step", "🔧 Tespit edilen sorunlar ayıklanıyor / düzeltiliyor…");
-      else if (ready.length > 1) this.emit(run.id, "agent_step", `✍️ ${ready.length} görev paralel kodlanıyor…`);
+      if (roles.has("reviewer")) this.emit(run.id, "agent_step", en ? "🔍 Coding done — reviewing the code against the goal…" : "🔍 Kodlama bitti — kod amaca uygunluk açısından denetleniyor…");
+      else if (roles.has("fixer")) this.emit(run.id, "agent_step", en ? "🔧 Fixing the detected issues…" : "🔧 Tespit edilen sorunlar ayıklanıyor / düzeltiliyor…");
+      else if (ready.length > 1) this.emit(run.id, "agent_step", en ? `✍️ Coding ${ready.length} tasks in parallel…` : `✍️ ${ready.length} görev paralel kodlanıyor…`);
       const results = await Promise.all(ready.map((task) => this.runTeamTask(run, task, done)));
       results.forEach((res, i) => done.set(ready[i].id, res));
       for (const task of ready) {
@@ -276,11 +294,12 @@ export class Runner {
         this.emit(run.id, "limit_detected", `${agent.name} limitli, atlanıyor.`, agent.id);
         continue;
       }
+      const en = runLang(run.prompt) === "en";
       if (i > 0) {
-        this.emit(run.id, "fallback_used", `${chain[0].name} başarısız/limitli → ${agent.name} devraldı.`, agent.id);
+        this.emit(run.id, "fallback_used", en ? `${chain[0].name} failed/limited → ${agent.name} took over.` : `${chain[0].name} başarısız/limitli → ${agent.name} devraldı.`, agent.id);
       }
       // Rol-bazlı, kullanıcının anlayacağı kısa durum: ne yapılıyor.
-      const verb = role === "reviewer" ? "🔍 denetliyor" : role === "fixer" ? "🔧 düzeltiyor" : "✍️ kodluyor";
+      const verb = role === "reviewer" ? (en ? "🔍 reviewing" : "🔍 denetliyor") : role === "fixer" ? (en ? "🔧 fixing" : "🔧 düzeltiyor") : (en ? "✍️ coding" : "✍️ kodluyor");
       this.emit(run.id, "agent_step", `${agent.name} ${verb}: ${task.title}`, agent.id);
       try {
         return await this.runAgent(agent, run, "", [], { cwd, promptText });
@@ -357,8 +376,9 @@ export class Runner {
       const control = this.controls.get(run.id);
       for (const role of flowRoles) {
         if (control?.stop) {
-          this.store.updateRun(run.id, { status: "failed", activeStep: "stopped", completedAt: new Date().toISOString(), summary: "Kullanıcı tarafından durduruldu." });
-          this.emit(run.id, "failed", "Çalışma kullanıcı tarafından durduruldu.");
+          const enStop = runLang(run.prompt) === "en";
+          this.store.updateRun(run.id, { status: "failed", activeStep: "stopped", completedAt: new Date().toISOString(), summary: enStop ? "Stopped by the user." : "Kullanıcı tarafından durduruldu." });
+          this.emit(run.id, "failed", enStop ? "Run stopped by the user." : "Çalışma kullanıcı tarafından durduruldu.");
           this.controls.delete(run.id);
           return;
         }
