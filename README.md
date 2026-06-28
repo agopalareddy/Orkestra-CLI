@@ -1,12 +1,13 @@
 # 🎹 Orkestra
 
+[![npm version](https://img.shields.io/npm/v/orkestra-cli.svg)](https://www.npmjs.com/package/orkestra-cli)
 [![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/License-PolyForm_Noncommercial_1.0.0-red.svg)](LICENSE)
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D20.0.0-blue.svg)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178c6.svg)](https://www.typescriptlang.org/)
 [![Fastify](https://img.shields.io/badge/Fastify-v5-black.svg)](https://fastify.dev/)
 [![React](https://img.shields.io/badge/React-v19-61dafb.svg)](https://react.dev/)
 [![Vite](https://img.shields.io/badge/Vite-v8-646cff.svg)](https://vitejs.dev/)
-[![SQLite](https://img.shields.io/badge/SQLite-WAL-003b57.svg)](https://sqlite.org/)
+[![No build tools](https://img.shields.io/badge/install-no_compiler_needed-success.svg)](#-getting-started)
 
 **Orkestra** is a premium, **local-first AI Agent Studio** that orchestrates the AI CLIs you already have installed and logged in on your machine — `claude-code`, `codex`, and `gemini-cli` / `agy` (Antigravity) — into a single unified developer panel.
 
@@ -26,6 +27,7 @@ Around that orchestration core, Orkestra ships a full builder's cockpit: a **liv
 - [⚡ Key Development Phases (Phase 1 - 6)](#-key-development-phases-phase-1---6)
 - [🔗 Native GitHub Integration](#-native-github-integration)
 - [🛠️ Workspace Tooling](#%EF%B8%8F-workspace-tooling)
+- [💸 Cost & Efficiency](#-cost--efficiency)
 - [⚙️ How It Works](#%EF%B8%8F-how-it-works)
 - [🚀 Getting Started](#-getting-started)
 - [🔧 Configuration (.env)](#-configuration-env)
@@ -135,6 +137,24 @@ Beyond orchestration, Orkestra is a complete builder's cockpit:
 
 ---
 
+## 💸 Cost & Efficiency
+
+Orkestra is built to be **cheaper than metered APIs** by driving the **flat-rate CLI subscriptions** you already pay for. The structural truth: **API billing grows with every token and has no ceiling; a subscription is flat and capped.**
+
+For the same heavy coding month (**≈46M tokens** = 39.6M in + 6.6M out), at public list prices:
+
+| Provider | Metered API (this workload) | Flat CLI subscription |
+|---|---:|---|
+| Claude | ≈ **$218/mo** (Sonnet) · ≈ $1,089/mo (Opus) | $20 (Pro) → $100–200 (Max) |
+| OpenAI | ≈ **$165/mo** | $20 (Plus) → $200 (Pro) |
+| Gemini | ≈ **$116/mo** | $20 (AI Pro) → ~$250 (Ultra) |
+
+The same month that bills **$116–$1,089** on an API stays within a **$20–$250 flat ceiling** on a subscription — and the more you code, the wider the gap. Orkestra's **multi-CLI + fallback chain** pools several subscriptions' quotas, so heavy workloads run at flat cost.
+
+📊 **Full methodology, formula, sources and caveats → [docs/COST.md](docs/COST.md)** (every number is public and reproducible).
+
+---
+
 ## ⚙️ How It Works
 
 ```mermaid
@@ -144,7 +164,7 @@ graph TD
     CLI -->|claude| C1[claude-code CLI → Anthropic]
     CLI -->|codex| C2[openai-codex CLI → OpenAI]
     CLI -->|agy| C3[antigravity / gemini CLI → Google]
-    Backend -->|WAL Journaling| DB[(SQLite DB)]
+    Backend -->|JSON store, no native deps| DB[(Local data store)]
     Backend -->|Persistent Workspace| WS[workspaces/run-xxxx]
 ```
 
@@ -280,12 +300,12 @@ The Fastify server exposes a REST API at `127.0.0.1:8787`:
 │   │       ├── github.ts   # GitHub REST + OAuth Device Flow + encrypted token store
 │   │       ├── preview.ts  # Live dev-server preview manager
 │   │       ├── events.ts   # SSE event hub
-│   │       └── db.ts       # better-sqlite3 (WAL) store
+│   │       └── db.ts       # dependency-free JSON store (no native build)
 │   └── web/                # React + Vite Glassmorphism Frontend (single-page studio)
 ├── packages/
 │   └── shared/             # Shared TypeScript types
 ├── docs/                   # Visual assets and screenshots
-├── data/                   # SQLite database (WAL), uploads & encrypted tokens
+├── data/                   # JSON store, uploads & encrypted tokens
 └── workspaces/             # Persistent, per-project Git workspaces
 ```
 
