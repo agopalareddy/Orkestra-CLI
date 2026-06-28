@@ -15,9 +15,6 @@ Instead of paying for third-party API proxies or direct token costs, Orkestra ru
 
 Around that orchestration core, Orkestra ships a full builder's cockpit: a **live diff reviewer**, an **in-app browser preview** (auto-detects React/Vite and static sites), an **integrated terminal** (PowerShell/cmd), a **file explorer**, **document export** (Markdown/PDF/Word/Excel) in Chat mode, desktop **notifications**, and **native GitHub integration** — connect via OAuth Device Flow and create/push/clone repos with an **embedded Git** that works even on machines without Git installed.
 
-### 🎥 Live Demo Walkthrough
-![Orkestra Live Demo Walkthrough](docs/images/orkestra_demo.webp)
-
 ---
 
 
