@@ -2,12 +2,10 @@ import { execFile, execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { promisify } from "node:util";
 import type { ChatMessage, CliToolStatus, EffortLevel } from "../../../packages/shared/types";
 import { getModelOptions, getUsageFor } from "./usage";
 import { ensureAgyTrusted } from "./runner";
 
-const exec = promisify(execFile);
 const plannerTimeoutMs = 60_000;
 const claudeTimeoutMs = 60_000;
 const statusTimeoutMs = 6_000;
