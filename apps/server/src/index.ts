@@ -1367,10 +1367,44 @@ app.get<{ Params: { runId: string; "*": string } }>("/preview/:runId/*", async (
   return reply.type(mime).send(content);
 });
 
-// Sunucu kapanırken vite dev süreçlerini kapat + bekleyen JSON yazımını diske işle.
-for (const sig of ["SIGINT", "SIGTERM", "exit"] as const) {
-  process.on(sig, () => { previews.stopAll(); store.flush(); });
+// Sunucu kapanırken ajan süreçlerini öldür, vite dev süreçlerini kapat, fastify'i kapat,
+// bekleyen JSON yazımını diske işle. İkinci Ctrl-C zorla çıkar.
+let shuttingDown = false;
+async function gracefulShutdown(signal: string) {
+  if (shuttingDown) {
+    // İkinci sinyal: kullanıcı sıkıldı, bekleyen temizliği atla, hemen çık.
+    console.warn(`[shutdown] second ${signal} received — forcing exit`);
+    process.exit(1);
+  }
+  shuttingDown = true;
+  const startedAt = Date.now();
+  // 5s hard deadline: temizlik takılırsa, yine de çık (ajan süreçleri SIGKILL ile öldürüldü).
+  const forceExit = setTimeout(() => {
+    console.error(`[shutdown] cleanup took >5s — forcing exit`);
+    process.exit(1);
+  }, 5000);
+  forceExit.unref();
+  console.log(`[shutdown] ${signal} received — closing server`);
+  try {
+    const killed = runner.stopAll();
+    if (killed > 0) console.log(`[shutdown] stopped ${killed} active run(s)`);
+  } catch (err) {
+    console.error("[shutdown] runner.stopAll failed:", err);
+  }
+  try { previews.stopAll(); } catch (err) { console.error("[shutdown] previews.stopAll failed:", err); }
+  try { await app.close(); } catch (err) { console.error("[shutdown] app.close failed:", err); }
+  try { store.flush(); } catch (err) { console.error("[shutdown] store.flush failed:", err); }
+  clearTimeout(forceExit);
+  console.log(`[shutdown] done in ${Date.now() - startedAt}ms`);
+  process.exit(0);
 }
+for (const sig of ["SIGINT", "SIGTERM"] as const) {
+  process.on(sig, () => { void gracefulShutdown(sig); });
+}
+// 'exit' senkron — sadece en son çare olarak diske yaz. (async burada ÇALIŞMAZ.)
+process.on("exit", () => {
+  try { previews.stopAll(); store.flush(); } catch { /* yok say */ }
+});
 
 await app.listen({ host: config.host, port: config.port });
 
