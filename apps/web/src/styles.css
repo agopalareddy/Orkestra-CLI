@@ -2509,6 +2509,21 @@ textarea:focus {
   color: var(--text-muted);
 }
 
+/* "API" rozeti: eklenen API sağlayıcıları CLI'lardan ayırır (seçici + chip + tetikleyici) */
+.apiTag {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #c4b5fd;
+  background: rgba(139, 92, 246, 0.18);
+  border: 1px solid rgba(139, 92, 246, 0.35);
+}
+
 .modelPickerGroup .agentIcon {
   width: 16px;
   height: 16px;

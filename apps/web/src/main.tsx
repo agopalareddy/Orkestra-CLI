@@ -5504,6 +5504,7 @@ function ModelPicker({
     }
   };
 
+  const isApiCli = (cli: DebateParticipant) => String(cli).startsWith("api:") || String(cli).startsWith("api-");
   const singleValueLabel = selected
     ? `${plannerLabels[selected.cli] ?? sources.find((s) => s.cli === selected.cli)?.label ?? plannerLabelOf(plannerLabels, selected.cli)}${selected.model && selected.model !== "default" ? ` · ${modelLabelOf(selected.cli, selected.model)}` : ""}`
     : (noneLabel ?? "");
@@ -5515,6 +5516,7 @@ function ModelPicker({
           participants.map((p, i) => (
             <span className="partChip on" key={`${p.cli}-${p.model}-${i}`}>
               {plannerLabels[p.cli] ?? sources.find((s) => s.cli === p.cli)?.label ?? plannerLabelOf(plannerLabels, p.cli)}{p.model !== "default" ? ` · ${modelLabelOf(p.cli, p.model)}` : ""}
+              {isApiCli(p.cli) && <span className="apiTag">API</span>}
               <button
                 className="partChipRemove"
                 onClick={() => onParticipantsChange?.(participants.filter((_, idx) => idx !== i))}
@@ -5532,6 +5534,7 @@ function ModelPicker({
           <button className="fuseWithBtn" onClick={() => setOpen((o) => !o)}>
             {triggerPrefix && <span className="fuseLabel">{triggerPrefix}</span>}
             <span className="fuseModel">{singleValueLabel}</span>
+            {selected && isApiCli(selected.cli) && <span className="apiTag">API</span>}
           </button>
         )}
       </div>
@@ -5556,6 +5559,7 @@ function ModelPicker({
                   <div className="modelPickerGroup">
                     <span className={`agentIcon ${s.cli}`}>{iconForTool(s.cli)}</span>
                     {s.label}
+                    {isApiCli(s.cli) && <span className="apiTag">API</span>}
                   </div>
                   {rows.map((m) => {
                     const sel = isSelected(s.cli, m.id);
@@ -5618,6 +5622,7 @@ function ParticipantPicker({
         {participants.map((p, index) => (
           <span className="partChip on" key={`${p.cli}-${p.model}-${index}`}>
             {plannerLabels[p.cli] ?? sources.find((s) => s.cli === p.cli)?.label ?? plannerLabelOf(plannerLabels, p.cli)}{p.model !== "default" ? ` · ${modelLabel(p.cli, p.model)}` : ""}
+            {(String(p.cli).startsWith("api:") || String(p.cli).startsWith("api-")) && <span className="apiTag">API</span>}
             <button
               className="partChipRemove"
               onClick={() => onChange(participants.filter((_, i) => i !== index))}
