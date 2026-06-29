@@ -24,7 +24,8 @@ import { GitService } from "./git";
 import { GitHubStore, getUser, createRepo, createPr, parseGitHubRemote, deviceStart, devicePoll } from "./github";
 import { linuxFolderPicker } from "./folder-picker";
 import { PreviewManager, detectProjectType } from "./preview";
-import { listKnownApiProviderIds, loadApiProviderConfigs } from "./apiProviders";
+import { listKnownApiProviderIds, loadApiProviderConfigs, agentFromConfig, configFromInput, apiProviderCatalog, type ApiProviderInput } from "./apiProviders";
+import { ApiProviderStore } from "./apiProviderStore";
 import {
   analyzeDebate,
   detectPipelineIntent,
@@ -47,6 +48,17 @@ const git = new GitService(process.cwd());
 const githubStore = new GitHubStore(config.dataDir);
 // Ajan git push/clone'u için token'ı bellekte runner'a ver (diske yazmadan).
 void githubStore.getToken().then((t) => { runner.githubToken = t; });
+// UI'dan eklenen API sağlayıcıları: çalıştırma anında runner buradan (şifreli store) çözer.
+const apiProviderStore = new ApiProviderStore(config.dataDir);
+runner.getStoredApiProvider = (command) => apiProviderStore.get(command);
+// Açılışta kayıtlı sağlayıcıları ajan listesine ekle (env tabanlılar db.ts'te ekleniyor).
+void apiProviderStore.list().then((configs) => {
+  for (const cfg of configs) {
+    const agent = agentFromConfig(cfg);
+    const existing = store.getAgent(agent.id);
+    store.saveAgent({ ...agent, status: existing?.status ?? agent.status, lastLimitedAt: existing?.lastLimitedAt ?? null });
+  }
+});
 const previews = new PreviewManager();
 
 const app = Fastify({ logger: true, bodyLimit: 25 * 1024 * 1024 });
@@ -426,16 +438,41 @@ app.get("/api/agents", async () => store.listAgents());
 
 app.get("/api/api-providers", async () => ({
   knownProviders: listKnownApiProviderIds(),
-  configured: loadApiProviderConfigs().map((provider) => ({
+  catalog: apiProviderCatalog(),
+  // .env ile tanımlı (salt-okunur) sağlayıcılar
+  envConfigured: loadApiProviderConfigs().map((provider) => ({
     id: provider.id,
     name: provider.name,
     provider: provider.kind,
     role: provider.role,
     model: provider.model,
     enabled: provider.enabled,
-    hasApiKey: Boolean(provider.apiKey)
-  }))
+    hasApiKey: Boolean(provider.apiKey),
+    source: "env" as const
+  })),
+  // UI'dan eklenen (düzenlenebilir/silinebilir) sağlayıcılar — anahtar dönmez
+  configured: apiProviderStore.listPublic().map((p) => ({ ...p, source: "ui" as const }))
 }));
+
+// UI'dan API sağlayıcı ekle/güncelle → şifreli sakla + ajan listesine kaydet.
+app.post<{ Body: ApiProviderInput }>("/api/api-providers", async (request, reply) => {
+  if (!request.body?.provider || !request.body?.model) {
+    return reply.code(400).send({ error: "provider ve model zorunlu." });
+  }
+  const cfg = configFromInput(request.body);
+  await apiProviderStore.save(cfg);
+  const agent = agentFromConfig(cfg);
+  const existing = store.getAgent(agent.id);
+  store.saveAgent({ ...agent, status: existing?.status ?? agent.status, lastLimitedAt: existing?.lastLimitedAt ?? null });
+  return { id: cfg.id, agentId: agent.id, name: cfg.name };
+});
+
+// UI'dan eklenen bir sağlayıcıyı sil (ajanı da kaldır).
+app.delete<{ Params: { id: string } }>("/api/api-providers/:id", async (request) => {
+  apiProviderStore.remove(request.params.id);
+  store.deleteAgent(`api-${request.params.id.replace(/^api-/, "")}`);
+  return { ok: true };
+});
 
 app.post<{ Body: SaveAgentRequest }>("/api/agents", async (request) => {
   const agent: Agent = {

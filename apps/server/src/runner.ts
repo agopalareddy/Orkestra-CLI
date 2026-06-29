@@ -7,7 +7,7 @@ import { GitService } from "./git";
 import { applyStaging, createStaging, discardStaging, findStaging, type StagingSession } from "./staging";
 import type { Store } from "./db";
 import type { EventHub } from "./events";
-import { getApiProviderConfig, runApiProvider } from "./apiProviders";
+import { getApiProviderConfig, runApiProvider, type ApiProviderConfig } from "./apiProviders";
 
 // Ajan başına yürütme zaman aşımı (saniye). Gerçek kodlama görevleri 5 dk'yı kolayca aşar;
 // varsayılan 30 dk. ORKESTRA_AGENT_TIMEOUT_SECONDS ile değiştirilebilir.
@@ -68,6 +68,8 @@ export class Runner {
   // GitHub token'ı (yalnızca bellekte). Ajanın git push/clone/fetch'i için süreç ortamına
   // GIT_CONFIG ile geçirilir → token diske YAZILMAZ. index.ts bağlan/kes'te günceller.
   githubToken: string | null = null;
+  // index.ts bunu ApiProviderStore'a bağlar → UI'dan eklenen sağlayıcılar çalıştırma anında çözülür.
+  getStoredApiProvider?: (command: string) => Promise<ApiProviderConfig | undefined>;
   // Pre-write diff approval: worktrees are created under this root. The
   // workspace is never touched until the user applies.
   stagingRoot: string;
@@ -760,7 +762,8 @@ export class Runner {
   }
 
   private async runApiAgent(agent: Agent, run: Run, transcript: string, notes: string[] = [], opts?: { promptText?: string }) {
-    const config = getApiProviderConfig(agent.command);
+    let config = getApiProviderConfig(agent.command);
+    if (!config && this.getStoredApiProvider) config = await this.getStoredApiProvider(agent.command);
     if (!config) throw new Error(`API provider not configured for ${agent.command}.`);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), agent.timeoutSeconds * 1000);

@@ -4155,6 +4155,14 @@ textarea:focus {
 .settingsSection { border-top: 1px solid rgba(148, 163, 184, 0.12); padding-top: 10px; }
 .settingsSectionHead { display: flex; align-items: center; justify-content: space-between; font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); margin-bottom: 4px; }
 
+/* API Providers (Ayarlar) */
+.settingsHint { font-size: 0.78rem; color: var(--text-muted); margin: 2px 0 8px; line-height: 1.4; }
+.apiProviderMeta { font-size: 0.74rem; color: var(--text-muted); margin-left: 6px; }
+.apiProviderForm { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; padding: 12px; border: 1px solid rgba(148, 163, 184, 0.18); border-radius: 12px; }
+.apiProviderForm select, .apiProviderForm input { width: 100%; padding: 8px 10px; border-radius: 9px; border: 1px solid rgba(148, 163, 184, 0.25); background: var(--surface-1, rgba(15, 23, 42, 0.4)); color: var(--text); font-size: 0.85rem; }
+.apiProviderErr { color: #f87171; font-size: 0.78rem; margin: 0; }
+.apiProviderFormActions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px; }
+
 .settingsDanger {
   display: flex;
   align-items: center;

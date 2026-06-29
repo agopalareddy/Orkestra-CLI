@@ -1027,6 +1027,11 @@ const api = {
     });
     if (!response.ok) throw new Error(await response.text());
     return response.json() as Promise<T>;
+  },
+  async del<T>(url: string): Promise<T> {
+    const response = await fetchWithRetry(url, { method: "DELETE" });
+    if (!response.ok) throw new Error(await response.text());
+    return response.json() as Promise<T>;
   }
 };
 
@@ -4470,6 +4475,106 @@ function GitHubDialog({
 }
 
 // Ayarlar dialog'u: tercih değişikliği + CLI yönetimi + sihirbazı sıfırla.
+// ─────────── API Provider yönetimi (Ayarlar) ───────────
+// .env yerine arayüzden API sağlayıcı (OpenRouter, Ollama, OpenAI-uyumlu…) ekleme.
+// Anahtar sunucuda şifreli saklanır (DPAPI/base64) ve istemciye asla geri dönmez.
+type ApiProviderItem = {
+  id: string; name: string; provider?: string; kind?: string; role: string;
+  model: string; enabled: boolean; hasApiKey: boolean; source: "env" | "ui";
+};
+type ApiProvidersResponse = {
+  knownProviders: string[];
+  catalog: Array<{ id: string; kind: string; apiBase: string; needsKey: boolean }>;
+  envConfigured: ApiProviderItem[];
+  configured: ApiProviderItem[];
+};
+
+function ApiProvidersSection({ language }: { language: Language }) {
+  const tt = language === "tr"
+    ? { title: "API Sağlayıcılar", add: "Ekle", hint: "CLI aboneliklerinin yanına API anahtarıyla sağlayıcı ekle (OpenRouter, Ollama, OpenAI-uyumlu). Anahtar şifreli saklanır.", empty: "Henüz API sağlayıcı yok. Eklemek için + tuşuna bas.", model: "Model (örn. openai/gpt-4o-mini)", apiKey: "API anahtarı", apiBaseOptional: "API Base (opsiyonel)", nameOptional: "İsim (opsiyonel)", remove: "Sil", cancel: "Vazgeç", save: "Kaydet", modelRequired: "Model gerekli.", keyRequired: "Bu sağlayıcı için API anahtarı gerekli.", envNote: ".env ile tanımlı (salt-okunur)" }
+    : { title: "API Providers", add: "Add", hint: "Add API-key providers (OpenRouter, Ollama, OpenAI-compatible) alongside your CLI subscriptions. Keys are stored encrypted.", empty: "No API providers yet. Press + to add one.", model: "Model (e.g. openai/gpt-4o-mini)", apiKey: "API key", apiBaseOptional: "API Base (optional)", nameOptional: "Name (optional)", remove: "Remove", cancel: "Cancel", save: "Save", modelRequired: "Model is required.", keyRequired: "This provider needs an API key.", envNote: "defined in .env (read-only)" };
+  const [data, setData] = useState<ApiProvidersResponse | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [form, setForm] = useState({ provider: "openrouter", model: "", role: "builder", name: "", apiKey: "", apiBase: "" });
+
+  const load = useCallback(async () => {
+    try { setData(await api.get<ApiProvidersResponse>("/api/api-providers")); } catch { /* yoksay */ }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+
+  const needsKey = data?.catalog.find((c) => c.id === form.provider)?.needsKey ?? true;
+  const all = [...(data?.configured ?? []), ...(data?.envConfigured ?? [])];
+
+  const submit = async () => {
+    setErr("");
+    if (!form.model.trim()) { setErr(tt.modelRequired); return; }
+    if (needsKey && !form.apiKey.trim()) { setErr(tt.keyRequired); return; }
+    setBusy(true);
+    try {
+      await api.post("/api/api-providers", {
+        provider: form.provider, model: form.model.trim(), role: form.role,
+        name: form.name.trim() || undefined, apiKey: form.apiKey.trim() || undefined,
+        apiBase: form.apiBase.trim() || undefined
+      });
+      setForm({ provider: "openrouter", model: "", role: "builder", name: "", apiKey: "", apiBase: "" });
+      setAdding(false);
+      await load();
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
+  };
+
+  const remove = async (id: string) => {
+    setBusy(true);
+    try { await api.del(`/api/api-providers/${encodeURIComponent(id)}`); await load(); }
+    catch { /* yoksay */ }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div className="settingsSection">
+      <div className="settingsSectionHead">
+        <span>{tt.title}</span>
+        <button className="iconButton" onClick={() => setAdding((v) => !v)} title={tt.add}><Plus size={14} /></button>
+      </div>
+      <p className="settingsHint">{tt.hint}</p>
+      {all.length === 0 && !adding && <p className="limitNoData">{tt.empty}</p>}
+      {all.map((p) => (
+        <div className="wizardCliRow" key={`${p.source}-${p.id}`}>
+          <div className="wizardCliName">
+            <span className="agentIcon"><Cpu size={14} /></span>
+            <strong>{p.name}</strong>
+            <span className="apiProviderMeta">{p.model} · {p.role}{p.source === "env" ? ` · ${tt.envNote}` : ""}</span>
+          </div>
+          {p.source === "ui"
+            ? <button className="ghostButton danger" disabled={busy} onClick={() => void remove(p.id)}><Trash2 size={13} /> {tt.remove}</button>
+            : <span className="wizardBadge">.env</span>}
+        </div>
+      ))}
+      {adding && (
+        <div className="apiProviderForm">
+          <select value={form.provider} onChange={(e) => setForm({ ...form, provider: e.target.value })}>
+            {(data?.catalog ?? []).map((c) => <option key={c.id} value={c.id}>{c.id}</option>)}
+          </select>
+          <input placeholder={tt.model} value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} />
+          <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
+            {["planner", "builder", "reviewer", "fixer", "custom"].map((r) => <option key={r} value={r}>{r}</option>)}
+          </select>
+          {needsKey && <input type="password" placeholder={tt.apiKey} value={form.apiKey} onChange={(e) => setForm({ ...form, apiKey: e.target.value })} autoComplete="off" />}
+          <input placeholder={tt.apiBaseOptional} value={form.apiBase} onChange={(e) => setForm({ ...form, apiBase: e.target.value })} />
+          <input placeholder={tt.nameOptional} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+          {err && <p className="apiProviderErr">{err}</p>}
+          <div className="apiProviderFormActions">
+            <button className="ghostButton" onClick={() => { setAdding(false); setErr(""); }}>{tt.cancel}</button>
+            <button className="primaryButton" disabled={busy} onClick={() => void submit()}>{tt.save}</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SettingsDialog({
   language, theme, status, onSetLanguage, onSetTheme, onAction, onInstall, onLogin, onRefresh, onClose, onResetWizard
 }: {
@@ -4579,6 +4684,8 @@ function SettingsDialog({
               ))
             )}
           </div>
+
+          <ApiProvidersSection language={language} />
 
           <div className="settingsDanger">
             <div>

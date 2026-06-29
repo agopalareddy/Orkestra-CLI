@@ -61,8 +61,9 @@ export function loadApiProviderConfigs(env: NodeJS.ProcessEnv = process.env): Ap
   return ids.map((rawId) => providerFromEnv(rawId, env)).filter((config): config is ApiProviderConfig => Boolean(config));
 }
 
-export function loadApiProviderAgents(env: NodeJS.ProcessEnv = process.env): Agent[] {
-  return loadApiProviderConfigs(env).map((config) => ({
+// Bir API sağlayıcı config'ini Orkestra ajan nesnesine çevirir (env veya UI store farketmez).
+export function agentFromConfig(config: ApiProviderConfig): Agent {
+  return {
     id: `api-${config.id}`,
     name: config.name,
     role: config.role,
@@ -74,7 +75,57 @@ export function loadApiProviderAgents(env: NodeJS.ProcessEnv = process.env): Age
     limitPatterns: ["rate limit", "quota", "429", "insufficient_quota", "billing"],
     status: "available" as const,
     lastLimitedAt: null
-  }));
+  };
+}
+
+export function loadApiProviderAgents(env: NodeJS.ProcessEnv = process.env): Agent[] {
+  return loadApiProviderConfigs(env).map(agentFromConfig);
+}
+
+// UI formundan gelen girdiyi tam bir ApiProviderConfig'e çevirir (sağlayıcı varsayılanlarını uygular).
+export interface ApiProviderInput {
+  id?: string;
+  provider: string;
+  name?: string;
+  role?: string;
+  model: string;
+  apiKey?: string;
+  apiBase?: string;
+  apiVersion?: string;
+  deployment?: string;
+  enabled?: boolean;
+  timeoutSeconds?: number;
+  maxTokens?: number;
+  temperature?: number;
+}
+
+export function configFromInput(input: ApiProviderInput): ApiProviderConfig {
+  const providerName = (input.provider || "openai").toLowerCase();
+  const defaults = providerDefaults[providerName] || providerDefaults["openai"];
+  const id = slug(input.id || `${providerName}-${input.role || "builder"}`);
+  return {
+    id,
+    name: input.name || `${title(providerName)} · ${input.model}`,
+    role: parseRole(input.role),
+    kind: defaults.kind,
+    model: input.model,
+    apiKey: input.apiKey || undefined,
+    apiBase: trimSlash(input.apiBase || defaults.apiBase),
+    apiVersion: input.apiVersion,
+    deployment: input.deployment,
+    enabled: input.enabled !== false,
+    timeoutSeconds: Math.max(10, Number(input.timeoutSeconds || 120)),
+    maxTokens: Math.max(1, Number(input.maxTokens || 4096)),
+    temperature: input.temperature === undefined ? undefined : Number(input.temperature),
+    headers: {}
+  };
+}
+
+// UI'daki sağlayıcı seçim listesi için: bilinen sağlayıcılar + varsayılan apiBase + anahtar gerekli mi.
+export function apiProviderCatalog() {
+  return Object.entries(providerDefaults)
+    .map(([id, d]) => ({ id, kind: d.kind, apiBase: d.apiBase ?? "", needsKey: id !== "ollama" && id !== "lmstudio" }))
+    .sort((a, b) => a.id.localeCompare(b.id));
 }
 
 export async function runApiProvider(config: ApiProviderConfig, prompt: string, signal?: AbortSignal): Promise<string> {
